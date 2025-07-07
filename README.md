@@ -1,15 +1,15 @@
-# @voices/nextjs
+# @vocals/nextjs
 
 Next.js utilities and route handlers for the Vocals Dev SDK.
 
 ## Installation
 
 ```bash
-npm install @voices/nextjs
+npm install @vocals/nextjs
 # or
-pnpm add @voices/nextjs
+pnpm add @vocals/nextjs
 # or
-yarn add @voices/nextjs
+yarn add @vocals/nextjs
 ```
 
 ## Setup
@@ -30,7 +30,7 @@ The `useVocals` hook provides a complete client-side solution for voice integrat
 ```tsx
 "use client";
 
-import { useVocals } from "@voices/nextjs";
+import { useVocals } from "@vocals/nextjs";
 
 function VoiceComponent() {
   const {
@@ -89,14 +89,14 @@ Create `app/api/wstoken/route.ts`:
 
 ```typescript
 // app/api/wstoken/route.ts
-export { POST } from "@voices/nextjs/app-router";
+export { POST } from "@vocals/nextjs/app-router";
 ```
 
 Or with custom logic:
 
 ```typescript
 // app/api/wstoken/route.ts
-import { createCustomAppRouterHandler } from "@voices/nextjs";
+import { createCustomAppRouterHandler } from "@vocals/nextjs";
 
 const customValidation = async (request: Request) => {
   // Add your custom validation logic here
@@ -112,14 +112,14 @@ Create `pages/api/wstoken.ts`:
 
 ```typescript
 // pages/api/wstoken.ts
-export { default } from "@voices/nextjs/pages-router";
+export { default } from "@vocals/nextjs/pages-router";
 ```
 
 Or with custom logic:
 
 ```typescript
 // pages/api/wstoken.ts
-import { createCustomPagesRouterHandler } from "@voices/nextjs";
+import { createCustomPagesRouterHandler } from "@vocals/nextjs";
 
 const customValidation = async (req) => {
   // Add your custom validation logic here
@@ -140,7 +140,7 @@ import type {
   Result,
   WSTokenResponse,
   ErrorResponse,
-} from "@voices/nextjs";
+} from "@vocals/nextjs";
 
 // WebSocket token structure
 type WSToken = {
@@ -200,7 +200,7 @@ For users migrating from previous voice SDK implementations, you can use the SDK
 ```tsx
 "use client";
 
-import { useVocals } from "@voices/nextjs";
+import { useVocals } from "@vocals/nextjs";
 import { useEffect } from "react";
 
 function CompatibilityExample() {
@@ -288,7 +288,7 @@ function CompatibilityExample() {
 For apps that only need token management without WebSocket connections:
 
 ```tsx
-import { useVocalsToken } from "@voices/nextjs";
+import { useVocalsToken } from "@vocals/nextjs";
 
 function TokenComponent() {
   const { token, expiresAt, isLoading, error, fetchToken, clearToken } =
@@ -364,7 +364,7 @@ import {
   isTokenExpired,
   getTokenTTL,
   getWSEndpoint,
-} from "@voices/nextjs";
+} from "@vocals/nextjs";
 
 // Generate a WebSocket token
 const tokenResult = await generateWSToken();
@@ -386,7 +386,7 @@ const endpoint = getWSEndpoint(); // "wss://api.vocalsdev.com/ws"
 ### Functional Programming Utilities
 
 ```typescript
-import { pipe, map, flatMap, Ok, Err } from "@voices/nextjs";
+import { pipe, map, flatMap, Ok, Err } from "@vocals/nextjs";
 
 // Function composition
 const processData = pipe(validateInput, transformData, saveToDatabase);
@@ -401,7 +401,7 @@ const transformed = map((value: string) => value.toUpperCase())(result);
 The package uses functional error handling with `Result<T, E>` types:
 
 ```typescript
-import { generateWSToken } from "@voices/nextjs";
+import { generateWSToken } from "@vocals/nextjs";
 
 const tokenResult = await generateWSToken();
 
@@ -457,7 +457,7 @@ Generates a WebSocket token for the authenticated user.
 You can add custom validation logic to the route handlers:
 
 ```typescript
-import { createCustomAppRouterHandler } from "@voices/nextjs";
+import { createCustomAppRouterHandler } from "@vocals/nextjs";
 
 const customValidation = async (request: Request) => {
   // Example: Check authentication

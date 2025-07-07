@@ -1,4 +1,4 @@
-// Main exports for @voices/nextjs package
+// Main exports for @vocals/nextjs package
 
 // Types
 export type {

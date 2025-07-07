@@ -1,5 +1,5 @@
 {
-  "name": "@voices/nextjs",
+  "name": "@vocals/nextjs",
   "version": "0.1.0",
   "description": "Next.js utilities and route handlers for Vocals Dev SDK",
   "main": "dist/index.js",
