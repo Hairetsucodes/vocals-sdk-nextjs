@@ -1,6 +1,6 @@
 {
   "name": "@vocals/nextjs",
-  "version": "0.1.0",
+  "version": "0.1.4",
   "description": "Next.js utilities and route handlers for Vocals Dev SDK",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -26,10 +26,10 @@
     "src"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc --skipLibCheck",
     "dev": "tsc --watch",
     "clean": "rm -rf dist",
-    "prepublishOnly": "npm run clean && npm run build"
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "nextjs",

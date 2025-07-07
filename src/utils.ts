@@ -15,28 +15,28 @@ export const compose =
 export const map =
   <T, U, E>(fn: (value: T) => U) =>
   (result: Result<T, E>): Result<U, E> =>
-    result.success ? Ok(fn(result.data)) : result;
+    result.success ? Ok(fn(result.data)) : (result as Result<U, E>);
 
 export const flatMap =
   <T, U, E>(fn: (value: T) => Result<U, E>) =>
   (result: Result<T, E>): Result<U, E> =>
-    result.success ? fn(result.data) : result;
+    result.success ? fn(result.data) : (result as Result<U, E>);
 
 export const mapError =
   <T, E1, E2>(fn: (error: E1) => E2) =>
   (result: Result<T, E1>): Result<T, E2> =>
-    result.success ? result : Err(fn(result.error));
+    result.success ? (result as Result<T, E2>) : Err(fn((result as any).error));
 
 // Async versions
 export const asyncMap =
   <T, U, E>(fn: (value: T) => Promise<U>) =>
   async (result: Result<T, E>): Promise<Result<U, E>> =>
-    result.success ? Ok(await fn(result.data)) : result;
+    result.success ? Ok(await fn(result.data)) : (result as Result<U, E>);
 
 export const asyncFlatMap =
   <T, U, E>(fn: (value: T) => Promise<Result<U, E>>) =>
   async (result: Result<T, E>): Promise<Result<U, E>> =>
-    result.success ? await fn(result.data) : result;
+    result.success ? await fn(result.data) : (result as Result<U, E>);
 
 // Validation utilities
 export const validate =

@@ -46,8 +46,10 @@ export const createWSTokenHandler = () => {
       const tokenResult = await generateWSToken();
 
       if (!tokenResult.success) {
-        const { error } = tokenResult;
-        return createErrorResponseHandler(error.message, 401);
+        return createErrorResponseHandler(
+          (tokenResult as any).error.message,
+          401
+        );
       }
 
       // Return success response
@@ -85,8 +87,10 @@ export const createCustomWSTokenHandler = (
       const tokenResult = await generateWSToken();
 
       if (!tokenResult.success) {
-        const { error } = tokenResult;
-        return createErrorResponseHandler(error.message, 401);
+        return createErrorResponseHandler(
+          (tokenResult as any).error.message,
+          401
+        );
       }
 
       // Return success response

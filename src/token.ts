@@ -7,7 +7,7 @@ import {
   VocalsError,
 } from "./types";
 import { getEnvVar, validate } from "./utils";
-import jwt from "jsonwebtoken";
+import * as jwt from "jsonwebtoken";
 
 // Constants
 const VOCALS_WS_ENDPOINT = "wss://api.vocals.dev/v1/stream/conversation";
@@ -77,13 +77,13 @@ export const generateWSToken = async (): Promise<
   const apiKeyResult = getVocalsApiKey();
 
   if (!apiKeyResult.success) {
-    return apiKeyResult;
+    return apiKeyResult as Result<WSToken, VocalsError>;
   }
 
   const validatedApiKeyResult = validateApiKeyFormat(apiKeyResult.data);
 
   if (!validatedApiKeyResult.success) {
-    return validatedApiKeyResult;
+    return validatedApiKeyResult as Result<WSToken, VocalsError>;
   }
 
   return await generateWSTokenFromApiKey(validatedApiKeyResult.data);
@@ -96,13 +96,13 @@ export const generateWSTokenWithUserId = async (
   const apiKeyResult = getVocalsApiKey();
 
   if (!apiKeyResult.success) {
-    return apiKeyResult;
+    return apiKeyResult as Result<WSToken, VocalsError>;
   }
 
   const validatedApiKeyResult = validateApiKeyFormat(apiKeyResult.data);
 
   if (!validatedApiKeyResult.success) {
-    return validatedApiKeyResult;
+    return validatedApiKeyResult as Result<WSToken, VocalsError>;
   }
 
   return await generateWSTokenFromApiKey(validatedApiKeyResult.data, userId);
