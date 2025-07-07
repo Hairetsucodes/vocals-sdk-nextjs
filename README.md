@@ -58,7 +58,7 @@ function ConversationDemo() {
     pauseAudio,
     onMessage,
   } = useVocals({
-    wsEndpoint: "ws://your-server.com/v1/stream/conversation",
+    wsEndpoint: "wss://api.vocals.dev/v1/stream/conversation",
     useTokenAuth: true,
     autoConnect: false,
   });
@@ -134,7 +134,7 @@ function VoiceToVoiceComponent() {
     addToQueue,
   } = useVocals({
     useTokenAuth: true,
-    wsEndpoint: "ws://your-server.com/v1/stream/conversation",
+    wsEndpoint: "wss://api.vocals.dev/v1/stream/conversation",
     autoConnect: false,
   });
 
@@ -428,7 +428,7 @@ const vocals = useVocals({
   tokenRefreshBuffer: 120000, // Refresh 2 minutes before expiry
 
   // WebSocket endpoint URL (optional)
-  wsEndpoint: "ws://localhost:8000/ws",
+  wsEndpoint: "wss://api.vocals.dev/v1/stream/conversation",
 
   // Whether to use token authentication (default: true)
   useTokenAuth: true,
@@ -623,9 +623,9 @@ type TTSSegment = {
 
 ### Environment Variables
 
-| Variable                         | Description                                            |
-| -------------------------------- | ------------------------------------------------------ |
-| `NEXT_PUBLIC_VOCALS_WS_ENDPOINT` | WebSocket endpoint (default: `ws://localhost:8000/ws`) |
+| Variable                         | Description                                                                 |
+| -------------------------------- | --------------------------------------------------------------------------- |
+| `NEXT_PUBLIC_VOCALS_WS_ENDPOINT` | WebSocket endpoint (default: `wss://api.vocals.dev/v1/stream/conversation`) |
 
 ### Utilities
 
@@ -652,7 +652,7 @@ const expired = isTokenExpired(token);
 const ttl = getTokenTTL(token);
 
 // Get WebSocket endpoint
-const endpoint = getWSEndpoint(); // "wss://api.vocalsdev.com/ws"
+const endpoint = getWSEndpoint(); // "wss://api.vocals.dev/v1/stream/conversation"
 ```
 
 ### Functional Programming Utilities

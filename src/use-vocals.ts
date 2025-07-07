@@ -443,7 +443,7 @@ export function useVocals(config: UseVocalsConfig = {}): UseVocalsReturn {
         const wsEndpoint =
           fullConfig.wsEndpoint ||
           process.env.NEXT_PUBLIC_VOCALS_WS_ENDPOINT ||
-          "ws://localhost:8000/ws";
+          "wss://api.vocals.dev/v1/stream/conversation";
 
         wsUrl = `${wsEndpoint}?token=${encodeURIComponent(token)}`;
       } else {
@@ -451,7 +451,7 @@ export function useVocals(config: UseVocalsConfig = {}): UseVocalsReturn {
         wsUrl =
           fullConfig.wsEndpoint ||
           process.env.NEXT_PUBLIC_VOCALS_WS_ENDPOINT ||
-          "ws://localhost:8000/ws";
+          "wss://api.vocals.dev/v1/stream/conversation";
       }
 
       // Create WebSocket connection
