@@ -1,6 +1,6 @@
 # @vocals/nextjs
 
-Next.js utilities and route handlers for the Vocals Dev SDK.
+Next.js utilities and route handlers for the Vocals Dev SDK, featuring complete voice-to-voice conversations with real-time speech recognition, streaming LLM responses, and TTS audio playback.
 
 ## Installation
 
@@ -11,6 +11,17 @@ pnpm add @vocals/nextjs
 # or
 yarn add @vocals/nextjs
 ```
+
+## Key Features
+
+- 🎙️ **Voice-to-Voice Conversations**: Complete conversational AI with speech-to-text, LLM processing, and text-to-speech
+- 🔄 **Real-time Streaming**: Live transcription and streaming LLM responses with WebSocket integration
+- 🎵 **TTS Audio Playback**: Automatic audio queue management and playback controls
+- 📊 **Audio Visualization**: Real-time amplitude monitoring and audio level indicators
+- 🔧 **Easy Integration**: Simple React hooks for seamless Next.js integration
+- 🔐 **Secure Authentication**: JWT token-based authentication with automatic refresh
+- 🌐 **WebSocket Support**: Efficient real-time communication with auto-reconnection
+- 📱 **TypeScript First**: Complete TypeScript support with comprehensive type definitions
 
 ## Setup
 
@@ -23,57 +34,245 @@ VOCALS_DEV_API_KEY=vdev_your_api_key_here
 
 ## Usage
 
-### Client-Side React Hook (useVocals)
+### Voice-to-Voice Conversations
 
-The `useVocals` hook provides a complete client-side solution for voice integration:
+The `useVocals` hook now supports full voice-to-voice conversations with streaming LLM responses and real-time TTS playback. Perfect for building conversational AI applications:
 
 ```tsx
 "use client";
 
 import { useVocals } from "@vocals/nextjs";
 
-function VoiceComponent() {
+function ConversationDemo() {
+  const {
+    isConnected,
+    isRecording,
+    isPlaying,
+    chatMessages,
+    currentTranscript,
+    audioQueue,
+    currentSegment,
+    startRecording,
+    stopRecording,
+    playAudio,
+    pauseAudio,
+    onMessage,
+  } = useVocals({
+    wsEndpoint: "ws://your-server.com/v1/stream/conversation",
+    useTokenAuth: true,
+    autoConnect: false,
+  });
+
+  // The hook automatically handles:
+  // - Real-time speech transcription
+  // - Streaming LLM responses
+  // - TTS audio queue management
+  // - Audio playback controls
+
+  return (
+    <div>
+      {/* Voice Controls */}
+      <button onClick={isRecording ? stopRecording : startRecording}>
+        {isRecording ? "Stop Talking" : "Start Talking"}
+      </button>
+
+      {/* TTS Playback */}
+      <button onClick={isPlaying ? pauseAudio : playAudio}>
+        {isPlaying ? "Pause AI" : "Play AI Response"}
+      </button>
+
+      {/* Live transcript while speaking */}
+      {currentTranscript && <p>You: {currentTranscript}</p>}
+
+      {/* Current AI audio being played */}
+      {currentSegment && <p>AI: {currentSegment.text}</p>}
+
+      {/* Audio queue status */}
+      <p>Queued responses: {audioQueue.length}</p>
+    </div>
+  );
+}
+```
+
+### Client-Side React Hook (useVocals)
+
+The `useVocals` hook provides a complete client-side solution for voice integration, including real-time transcription, streaming LLM responses, and TTS playback:
+
+```tsx
+"use client";
+
+import { useVocals } from "@vocals/nextjs";
+import { useState, useEffect } from "react";
+
+function VoiceToVoiceComponent() {
+  const [chatMessages, setChatMessages] = useState([]);
+  const [currentTranscript, setCurrentTranscript] = useState("");
+
   const {
     connectionState,
     isConnected,
     isRecording,
     recordingState,
     error,
+    currentAmplitude,
     connect,
     disconnect,
     startRecording,
     stopRecording,
     sendMessage,
     onMessage,
-  } = useVocals();
+    onAudioData,
+    // TTS Playback functionality
+    playbackState,
+    isPlaying,
+    audioQueue,
+    currentSegment,
+    playAudio,
+    pauseAudio,
+    stopAudio,
+    clearQueue,
+    addToQueue,
+  } = useVocals({
+    useTokenAuth: true,
+    wsEndpoint: "ws://your-server.com/v1/stream/conversation",
+    autoConnect: false,
+  });
 
-  // Listen for messages
+  // Handle real-time conversation messages
   useEffect(() => {
     const unsubscribe = onMessage((message) => {
-      console.log("Received:", message);
+      if (message.type === "transcription" && message.data) {
+        // Handle partial and final transcriptions
+        setChatMessages((prev) => {
+          const existingIndex = prev.findIndex(
+            (msg) => msg.id === message.data.segment_id
+          );
+
+          const newMessage = {
+            id: message.data.segment_id,
+            text: message.data.text,
+            isUser: true,
+            isPartial: message.data.is_partial,
+            timestamp: new Date(),
+          };
+
+          if (existingIndex !== -1) {
+            const updated = [...prev];
+            updated[existingIndex] = newMessage;
+            return updated;
+          } else {
+            return [...prev, newMessage];
+          }
+        });
+      } else if (message.type === "llm_response_streaming" && message.data) {
+        // Handle streaming LLM responses
+        setChatMessages((prev) => {
+          const streamingId = `${message.data.segment_id}-streaming`;
+          const existingIndex = prev.findIndex((msg) => msg.id === streamingId);
+
+          const streamingMessage = {
+            id: streamingId,
+            text: message.data.accumulated_response || message.data.token,
+            isUser: false,
+            isPartial: !message.data.is_complete,
+            timestamp: new Date(),
+          };
+
+          if (existingIndex !== -1) {
+            const updated = [...prev];
+            updated[existingIndex] = streamingMessage;
+            return updated;
+          } else {
+            return [...prev, streamingMessage];
+          }
+        });
+      } else if (message.type === "tts_audio" && message.data) {
+        // Add TTS audio to playback queue
+        addToQueue(message.data);
+
+        // Auto-play if not currently playing
+        if (playbackState === "idle") {
+          setTimeout(() => playAudio(), 100);
+        }
+      } else if (message.type === "detection") {
+        // Real-time transcription during recording
+        if (message.text && isRecording) {
+          setCurrentTranscript(message.text);
+        }
+      }
+    });
+
+    return unsubscribe;
+  }, [onMessage, isRecording, playbackState, addToQueue, playAudio]);
+
+  // Handle raw audio data for visualization
+  useEffect(() => {
+    const unsubscribe = onAudioData((audioData) => {
+      // Raw PCM data for custom audio visualization
+      console.log("Audio samples:", audioData.length);
     });
     return unsubscribe;
-  }, [onMessage]);
+  }, [onAudioData]);
 
   return (
     <div>
-      <p>Status: {connectionState}</p>
+      {/* Connection Status */}
+      <div>
+        <p>Status: {connectionState}</p>
+        <p>Audio Level: {(currentAmplitude * 100).toFixed(1)}%</p>
+      </div>
 
-      {!isConnected ? (
-        <button onClick={connect}>Connect</button>
-      ) : (
-        <button onClick={disconnect}>Disconnect</button>
-      )}
-
+      {/* Recording Controls */}
       <div>
         {!isRecording ? (
-          <button onClick={startRecording}>
-            Start Recording {/* Automatically connects if needed */}
+          <button onClick={isConnected ? startRecording : connect}>
+            {isConnected ? "Start Recording" : "Connect & Record"}
           </button>
         ) : (
           <button onClick={stopRecording}>Stop Recording</button>
         )}
       </div>
+
+      {/* TTS Playback Controls */}
+      <div>
+        <p>
+          Playback: {playbackState} | Queue: {audioQueue.length}
+        </p>
+        <button onClick={playAudio} disabled={audioQueue.length === 0}>
+          ▶️ Play
+        </button>
+        <button onClick={pauseAudio} disabled={!isPlaying}>
+          ⏸️ Pause
+        </button>
+        <button onClick={stopAudio}>⏹️ Stop</button>
+        <button onClick={clearQueue}>🗑️ Clear Queue</button>
+      </div>
+
+      {/* Live Transcript */}
+      {isRecording && currentTranscript && (
+        <div>
+          <p>Live: {currentTranscript}</p>
+        </div>
+      )}
+
+      {/* Chat Messages */}
+      <div>
+        {chatMessages.map((message) => (
+          <div key={message.id} className={message.isUser ? "user" : "ai"}>
+            <p>{message.text}</p>
+            {message.isPartial && <span>Processing...</span>}
+            <small>{message.timestamp.toLocaleTimeString()}</small>
+          </div>
+        ))}
+      </div>
+
+      {/* Currently Playing TTS */}
+      {currentSegment && (
+        <div>
+          <p>🔊 Playing: {currentSegment.text}</p>
+          <p>Duration: {currentSegment.duration_seconds}s</p>
+        </div>
+      )}
 
       {error && <p>Error: {error.message}</p>}
     </div>
@@ -140,6 +339,11 @@ import type {
   Result,
   WSTokenResponse,
   ErrorResponse,
+  TTSSegment,
+  PlaybackState,
+  ConnectionState,
+  RecordingState,
+  ChatMessage,
 } from "@vocals/nextjs";
 
 // WebSocket token structure
@@ -159,6 +363,44 @@ type VocalsError = {
 type Result<T, E = VocalsError> =
   | { success: true; data: T }
   | { success: false; error: E };
+
+// TTS Audio segment
+type TTSSegment = {
+  audio_data: string; // Base64 encoded audio data
+  text: string; // Text that was converted to speech
+  segment_id: string; // Unique identifier for this segment
+  format: string; // Audio format (mp3, wav, etc.)
+  sample_rate: number; // Audio sample rate
+  duration_seconds: number; // Duration of the audio segment
+};
+
+// Playback state
+type PlaybackState = "idle" | "playing" | "paused" | "loading" | "error";
+
+// Connection state
+type ConnectionState =
+  | "disconnected"
+  | "connecting"
+  | "connected"
+  | "reconnecting"
+  | "error";
+
+// Recording state
+type RecordingState =
+  | "idle"
+  | "recording"
+  | "processing"
+  | "completed"
+  | "error";
+
+// Chat message for conversation UI
+type ChatMessage = {
+  id: string;
+  text: string;
+  timestamp: Date;
+  isUser: boolean;
+  isPartial?: boolean;
+};
 ```
 
 ### useVocals Hook Configuration
@@ -311,27 +553,37 @@ function TokenComponent() {
 
 ### Hook Return Values
 
-| Property               | Type                       | Description                                     |
-| ---------------------- | -------------------------- | ----------------------------------------------- |
-| `connectionState`      | `ConnectionState`          | Current WebSocket connection state              |
-| `isConnected`          | `boolean`                  | Whether WebSocket is connected                  |
-| `isConnecting`         | `boolean`                  | Whether WebSocket is connecting/reconnecting    |
-| `token`                | `string \| null`           | Current WebSocket token                         |
-| `tokenExpiresAt`       | `number \| null`           | Token expiration timestamp                      |
-| `recordingState`       | `RecordingState`           | Current recording state                         |
-| `isRecording`          | `boolean`                  | Whether actively recording                      |
-| `error`                | `VocalsError \| null`      | Last error that occurred                        |
-| `connect()`            | `() => Promise<void>`      | Manually connect to WebSocket                   |
-| `disconnect()`         | `() => void`               | Disconnect from WebSocket                       |
-| `reconnect()`          | `() => Promise<void>`      | Force reconnection                              |
-| `startRecording()`     | `() => Promise<void>`      | Start audio recording (auto-connects if needed) |
-| `stopRecording()`      | `() => Promise<void>`      | Stop audio recording                            |
-| `sendMessage()`        | `(message) => void`        | Send message via WebSocket                      |
-| `onMessage()`          | `(handler) => unsubscribe` | Listen for WebSocket messages                   |
-| `onConnectionChange()` | `(handler) => unsubscribe` | Listen for connection state changes             |
-| `onError()`            | `(handler) => unsubscribe` | Listen for errors                               |
-| `onAudioData()`        | `(handler) => unsubscribe` | Listen for raw PCM audio data                   |
-| `currentAmplitude`     | `number`                   | Current audio amplitude (0-1)                   |
+| Property                    | Type                       | Description                                     |
+| --------------------------- | -------------------------- | ----------------------------------------------- |
+| `connectionState`           | `ConnectionState`          | Current WebSocket connection state              |
+| `isConnected`               | `boolean`                  | Whether WebSocket is connected                  |
+| `isConnecting`              | `boolean`                  | Whether WebSocket is connecting/reconnecting    |
+| `token`                     | `string \| null`           | Current WebSocket token                         |
+| `tokenExpiresAt`            | `number \| null`           | Token expiration timestamp                      |
+| `recordingState`            | `RecordingState`           | Current recording state                         |
+| `isRecording`               | `boolean`                  | Whether actively recording                      |
+| `error`                     | `VocalsError \| null`      | Last error that occurred                        |
+| `connect()`                 | `() => Promise<void>`      | Manually connect to WebSocket                   |
+| `disconnect()`              | `() => void`               | Disconnect from WebSocket                       |
+| `reconnect()`               | `() => Promise<void>`      | Force reconnection                              |
+| `startRecording()`          | `() => Promise<void>`      | Start audio recording (auto-connects if needed) |
+| `stopRecording()`           | `() => Promise<void>`      | Stop audio recording                            |
+| `sendMessage()`             | `(message) => void`        | Send message via WebSocket                      |
+| `onMessage()`               | `(handler) => unsubscribe` | Listen for WebSocket messages                   |
+| `onConnectionChange()`      | `(handler) => unsubscribe` | Listen for connection state changes             |
+| `onError()`                 | `(handler) => unsubscribe` | Listen for errors                               |
+| `onAudioData()`             | `(handler) => unsubscribe` | Listen for raw PCM audio data                   |
+| `currentAmplitude`          | `number`                   | Current audio amplitude (0-1)                   |
+| **TTS Playback Properties** |                            | **Audio playback and queue management**         |
+| `playbackState`             | `PlaybackState`            | Current TTS playback state                      |
+| `isPlaying`                 | `boolean`                  | Whether TTS audio is currently playing          |
+| `audioQueue`                | `TTSSegment[]`             | Queue of TTS audio segments                     |
+| `currentSegment`            | `TTSSegment \| null`       | Currently playing TTS segment                   |
+| `playAudio()`               | `() => Promise<void>`      | Start/resume TTS playback                       |
+| `pauseAudio()`              | `() => void`               | Pause TTS playback                              |
+| `stopAudio()`               | `() => void`               | Stop TTS playback and clear current segment     |
+| `clearQueue()`              | `() => void`               | Clear TTS audio queue                           |
+| `addToQueue()`              | `(segment) => void`        | Add TTS segment to playback queue               |
 
 ### Connection States
 
@@ -348,6 +600,106 @@ function TokenComponent() {
 - `"processing"` - Processing recorded audio
 - `"completed"` - Recording completed successfully
 - `"error"` - Recording failed
+
+### TTS Playback States
+
+- `"idle"` - No audio playing or queued
+- `"playing"` - Audio is currently playing
+- `"paused"` - Audio is paused
+- `"loading"` - Loading audio data
+- `"error"` - Playback error occurred
+
+### Message Types
+
+The `onMessage` handler receives different types of messages from the WebSocket connection:
+
+#### Voice-to-Voice Conversation Messages
+
+```typescript
+// Transcription (partial and final)
+{
+  type: "transcription",
+  data: {
+    text: "Hello, how are you?",
+    segment_id: "segment_123",
+    is_partial: false,
+    confidence: 0.95
+  }
+}
+
+// Streaming LLM Response
+{
+  type: "llm_response_streaming",
+  data: {
+    token: "Hello",
+    accumulated_response: "Hello, I'm doing well",
+    segment_id: "segment_123",
+    is_complete: false
+  }
+}
+
+// Complete LLM Response
+{
+  type: "llm_response",
+  data: {
+    response: "Hello, I'm doing well, thank you for asking!",
+    original_text: "Hello, how are you?",
+    segment_id: "segment_123"
+  }
+}
+
+// TTS Audio Data
+{
+  type: "tts_audio",
+  data: {
+    audio_data: "base64_encoded_audio_data",
+    text: "Hello, I'm doing well, thank you for asking!",
+    segment_id: "segment_123",
+    format: "mp3",
+    sample_rate: 22050,
+    duration_seconds: 2.5
+  }
+}
+```
+
+#### Real-time Detection Messages
+
+```typescript
+// Real-time speech detection (during recording)
+{
+  type: "detection",
+  text: "Hello, how are",
+  confidence: 0.8
+}
+
+// Transcription status updates
+{
+  type: "transcription_status",
+  data: {
+    status: "processing",
+    message: "Processing audio..."
+  }
+}
+
+// Audio file saved (if enabled)
+{
+  type: "audio_saved",
+  filename: "recording_20240101_120000.wav"
+}
+```
+
+### TTSSegment Type
+
+```typescript
+type TTSSegment = {
+  audio_data: string; // Base64 encoded audio data
+  text: string; // Text that was converted to speech
+  segment_id: string; // Unique identifier for this segment
+  format: string; // Audio format (mp3, wav, etc.)
+  sample_rate: number; // Audio sample rate
+  duration_seconds: number; // Duration of the audio segment
+};
+```
 
 ### Environment Variables
 
