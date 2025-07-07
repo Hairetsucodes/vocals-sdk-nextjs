@@ -746,15 +746,6 @@ const customValidation = async (request: Request) => {
 export const POST = createCustomAppRouterHandler(customValidation);
 ```
 
-## Architecture
-
-This package follows functional programming principles:
-
-- **Pure Functions**: Predictable, testable functions without side effects
-- **Immutable Data**: Data structures that don't mutate
-- **Function Composition**: Combine small functions into larger ones
-- **Explicit Error Handling**: Using `Result<T, E>` instead of throwing exceptions
-
 ## License
 
 MIT
