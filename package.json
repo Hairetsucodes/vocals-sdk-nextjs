@@ -1,6 +1,6 @@
 {
   "name": "@vocals/nextjs",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Next.js utilities and route handlers for Vocals Dev SDK",
   "homepage": "https://vocals.dev",
   "main": "dist/index.js",
