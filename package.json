@@ -1,0 +1,62 @@
+{
+  "name": "@voices/nextjs",
+  "version": "0.1.0",
+  "description": "Next.js utilities and route handlers for Vocals Dev SDK",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./app-router": {
+      "import": "./dist/app-router.js",
+      "require": "./dist/app-router.js",
+      "types": "./dist/app-router.d.ts"
+    },
+    "./pages-router": {
+      "import": "./dist/pages-router.js",
+      "require": "./dist/pages-router.js",
+      "types": "./dist/pages-router.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build"
+  },
+  "keywords": [
+    "nextjs",
+    "websocket",
+    "vocals-dev",
+    "api-routes"
+  ],
+  "author": "Vocals Dev Team",
+  "license": "MIT",
+  "dependencies": {
+    "jsonwebtoken": "^9.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/react": "^18.0.0",
+    "@types/jsonwebtoken": "^9.0.3",
+    "next": "^14.0.0",
+    "react": "^18.0.0",
+    "typescript": "^5.0.0"
+  },
+  "peerDependencies": {
+    "next": ">=13.0.0",
+    "react": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/vocals-dev/vocals-dev-sdk.git",
+    "directory": "packages/nextjs"
+  }
+}
