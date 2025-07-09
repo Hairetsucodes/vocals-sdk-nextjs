@@ -10,6 +10,18 @@ export type {
   WSTokenRequest,
   WSTokenResponse,
   ErrorResponse,
+  // New message types
+  VocalsWebSocketMessage,
+  TranscriptionMessage,
+  LLMResponseStreamingMessage,
+  LLMResponseMessage,
+  DetectionMessage,
+  TranscriptionStatusMessage,
+  AudioSavedMessage,
+  TTSAudioMessage,
+  SpeechInterruptionMessage,
+  ChatMessage,
+  ConversationState,
 } from "./types";
 
 // Type constructors
@@ -61,8 +73,16 @@ export {
 
 // React hooks
 export {
+  // Base hook
   useVocals,
   useVocalsToken,
+
+  // High-level hooks
+  useVocalsConversation,
+  useVocalsTranscription,
+  useVocalsVisualization,
+
+  // Base hook types
   type UseVocalsConfig,
   type UseVocalsReturn,
   type ConnectionState,
@@ -70,9 +90,20 @@ export {
   type PlaybackState,
   type VocalsMessage,
   type TTSAudioSegment,
-  type TTSAudioMessage,
-  type SpeechInterruptionData,
-  type SpeechInterruptionMessage,
+
+  // Conversation hook types
+  type UseVocalsConversationConfig,
+  type UseVocalsConversationReturn,
+
+  // Transcription hook types
+  type UseVocalsTranscriptionConfig,
+  type UseVocalsTranscriptionReturn,
+  type TranscriptEntry,
+
+  // Visualization hook types
+  type UseVocalsVisualizationConfig,
+  type UseVocalsVisualizationReturn,
+  type AudioVisualizationData,
 } from "./use-vocals";
 
 // Convenience re-exports with clearer names

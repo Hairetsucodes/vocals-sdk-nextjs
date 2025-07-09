@@ -6,6 +6,15 @@ import {
   WebSocketMessage,
   WebSocketResponse,
   AudioProcessorMessage,
+  VocalsWebSocketMessage,
+  TranscriptionMessage,
+  LLMResponseStreamingMessage,
+  LLMResponseMessage,
+  DetectionMessage,
+  TranscriptionStatusMessage,
+  AudioSavedMessage,
+  ChatMessage,
+  ConversationState,
 } from "./types";
 
 // Hook configuration options
@@ -47,7 +56,7 @@ export type RecordingState =
 // Audio playback states
 export type PlaybackState = "idle" | "playing" | "paused" | "error";
 
-// TTS Audio segment interface
+// TTS Audio segment interface (keeping local for backward compatibility)
 export interface TTSAudioSegment {
   text: string;
   audio_data: string; // Base64 encoded WAV
@@ -57,27 +66,6 @@ export interface TTSAudioSegment {
   generation_time_ms: number;
   format: string;
   duration_seconds: number;
-}
-
-// TTS Audio message interface
-export interface TTSAudioMessage {
-  type: "tts_audio";
-  data: TTSAudioSegment;
-}
-
-// Speech interruption data interface
-export interface SpeechInterruptionData {
-  segment_id: string;
-  start_time: number;
-  reason: "new_speech_segment" | "speech_segment_merged" | string;
-  connection_id?: number;
-  timestamp: number;
-}
-
-// Speech interruption message interface
-export interface SpeechInterruptionMessage {
-  type: "speech_interruption";
-  data: SpeechInterruptionData;
 }
 
 // Use WebSocketMessage from types.ts
@@ -469,8 +457,16 @@ export function useVocals(config: UseVocalsConfig = {}): UseVocalsReturn {
 
           // Handle speech interruption events
           if ((message as any).type === "speech_interruption") {
-            const interruptionMessage =
-              message as any as SpeechInterruptionMessage;
+            const interruptionMessage = message as any as {
+              type: "speech_interruption";
+              data: {
+                segment_id: string;
+                start_time: number;
+                reason: "new_speech_segment" | "speech_segment_merged" | string;
+                connection_id?: number;
+                timestamp: number;
+              };
+            };
             console.log(
               "Speech interruption received:",
               interruptionMessage.data
@@ -490,7 +486,10 @@ export function useVocals(config: UseVocalsConfig = {}): UseVocalsReturn {
 
           // Handle TTS audio messages
           if ((message as any).type === "tts_audio" && (message as any).data) {
-            const ttsMessage = message as any as TTSAudioMessage;
+            const ttsMessage = message as any as {
+              type: "tts_audio";
+              data: TTSAudioSegment;
+            };
             // Add to audio playback queue
             addToQueue(ttsMessage.data);
 
@@ -1182,5 +1181,958 @@ export function useVocalsToken(
       setToken(null);
       setExpiresAt(null);
     },
+  };
+}
+
+// Configuration for conversation hook
+export interface UseVocalsConversationConfig extends UseVocalsConfig {
+  /** Auto-play TTS audio when received (defaults to true) */
+  autoPlayAudio?: boolean;
+  /** Auto-clear conversation on disconnect (defaults to false) */
+  autoClearOnDisconnect?: boolean;
+  /** Maximum number of messages to keep in conversation (defaults to 100) */
+  maxMessages?: number;
+  /** Debounce time for partial transcript updates in ms (defaults to 100) */
+  transcriptDebounceMs?: number;
+}
+
+// Return interface for conversation hook
+export interface UseVocalsConversationReturn
+  extends Omit<UseVocalsReturn, "onMessage"> {
+  // Conversation state
+  messages: ChatMessage[];
+  currentTranscript: string;
+  isProcessing: boolean;
+  lastActivity: Date | null;
+
+  // Conversation methods
+  clearConversation: () => void;
+  addMessage: (message: Omit<ChatMessage, "id" | "timestamp">) => void;
+  updateMessage: (id: string, updates: Partial<ChatMessage>) => void;
+  removeMessage: (id: string) => void;
+
+  // Enhanced event handlers
+  onTranscription: (
+    handler: (message: TranscriptionMessage) => void
+  ) => () => void;
+  onLLMResponse: (handler: (message: LLMResponseMessage) => void) => () => void;
+  onLLMStreaming: (
+    handler: (message: LLMResponseStreamingMessage) => void
+  ) => () => void;
+  onDetection: (handler: (message: DetectionMessage) => void) => () => void;
+  onAudioSaved: (handler: (message: AudioSavedMessage) => void) => () => void;
+  onRawMessage: (handler: (message: WebSocketResponse) => void) => () => void;
+}
+
+// High-level conversation hook that handles all message parsing and state management
+export function useVocalsConversation(
+  config: UseVocalsConversationConfig = {}
+): UseVocalsConversationReturn {
+  const {
+    autoPlayAudio = true,
+    autoClearOnDisconnect = false,
+    maxMessages = 100,
+    transcriptDebounceMs = 100,
+    ...vocalsConfig
+  } = config;
+
+  // Use the base vocals hook
+  const vocals = useVocals(vocalsConfig);
+
+  // Conversation state
+  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [currentTranscript, setCurrentTranscript] = useState<string>("");
+  const [isProcessing, setIsProcessing] = useState<boolean>(false);
+  const [lastActivity, setLastActivity] = useState<Date | null>(null);
+
+  // Event handlers
+  const transcriptionHandlersRef = useRef<
+    Set<(message: TranscriptionMessage) => void>
+  >(new Set());
+  const llmResponseHandlersRef = useRef<
+    Set<(message: LLMResponseMessage) => void>
+  >(new Set());
+  const llmStreamingHandlersRef = useRef<
+    Set<(message: LLMResponseStreamingMessage) => void>
+  >(new Set());
+  const detectionHandlersRef = useRef<Set<(message: DetectionMessage) => void>>(
+    new Set()
+  );
+  const audioSavedHandlersRef = useRef<
+    Set<(message: AudioSavedMessage) => void>
+  >(new Set());
+  const rawMessageHandlersRef = useRef<
+    Set<(message: WebSocketResponse) => void>
+  >(new Set());
+
+  // Debounced transcript update
+  const transcriptTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Helper function to update last activity
+  const updateLastActivity = useCallback(() => {
+    setLastActivity(new Date());
+  }, []);
+
+  // Helper function to add/update messages with deduplication
+  const addOrUpdateMessage = useCallback(
+    (message: ChatMessage) => {
+      setMessages((prev) => {
+        const existingIndex = prev.findIndex((msg) => msg.id === message.id);
+
+        if (existingIndex !== -1) {
+          // Update existing message
+          const updated = [...prev];
+          updated[existingIndex] = message;
+          return updated;
+        } else {
+          // Add new message and trim if needed
+          const newMessages = [...prev, message];
+          return newMessages.length > maxMessages
+            ? newMessages.slice(-maxMessages)
+            : newMessages;
+        }
+      });
+    },
+    [maxMessages]
+  );
+
+  // Conversation methods
+  const clearConversation = useCallback(() => {
+    setMessages([]);
+    setCurrentTranscript("");
+    setIsProcessing(false);
+    setLastActivity(null);
+  }, []);
+
+  const addMessage = useCallback(
+    (message: Omit<ChatMessage, "id" | "timestamp">) => {
+      const newMessage: ChatMessage = {
+        ...message,
+        id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        timestamp: new Date(),
+      };
+      addOrUpdateMessage(newMessage);
+    },
+    [addOrUpdateMessage]
+  );
+
+  const updateMessage = useCallback(
+    (id: string, updates: Partial<ChatMessage>) => {
+      setMessages((prev) =>
+        prev.map((msg) => (msg.id === id ? { ...msg, ...updates } : msg))
+      );
+    },
+    []
+  );
+
+  const removeMessage = useCallback((id: string) => {
+    setMessages((prev) => prev.filter((msg) => msg.id !== id));
+  }, []);
+
+  // Message handler with type parsing
+  const handleMessage = useCallback(
+    (message: WebSocketResponse) => {
+      updateLastActivity();
+
+      // Notify raw message handlers
+      rawMessageHandlersRef.current.forEach((handler) => handler(message));
+
+      // Handle different message types
+      if ((message as any).type === "transcription" && (message as any).data) {
+        const transcriptionMessage = message as any as TranscriptionMessage;
+
+        // Notify transcription handlers
+        transcriptionHandlersRef.current.forEach((handler) =>
+          handler(transcriptionMessage)
+        );
+
+        // Update conversation state
+        const { text, is_partial, segment_id, confidence } =
+          transcriptionMessage.data;
+
+        const chatMessage: ChatMessage = {
+          id: segment_id,
+          text,
+          timestamp: new Date(),
+          isUser: true,
+          isPartial: is_partial,
+          segmentId: segment_id,
+          confidence,
+        };
+
+        addOrUpdateMessage(chatMessage);
+        setCurrentTranscript(is_partial ? text : "");
+        setIsProcessing(is_partial);
+      } else if (
+        (message as any).type === "llm_response_streaming" &&
+        (message as any).data
+      ) {
+        const streamingMessage = message as any as LLMResponseStreamingMessage;
+
+        // Notify streaming handlers
+        llmStreamingHandlersRef.current.forEach((handler) =>
+          handler(streamingMessage)
+        );
+
+        // Update conversation state
+        const { token, accumulated_response, is_complete, segment_id } =
+          streamingMessage.data;
+
+        const chatMessage: ChatMessage = {
+          id: `${segment_id}-streaming`,
+          text: accumulated_response || token,
+          timestamp: new Date(),
+          isUser: false,
+          isPartial: !is_complete,
+          segmentId: segment_id,
+        };
+
+        addOrUpdateMessage(chatMessage);
+        setIsProcessing(!is_complete);
+      } else if (
+        (message as any).type === "llm_response" &&
+        (message as any).data
+      ) {
+        const responseMessage = message as any as LLMResponseMessage;
+
+        // Notify response handlers
+        llmResponseHandlersRef.current.forEach((handler) =>
+          handler(responseMessage)
+        );
+
+        // Update conversation state
+        const { response, segment_id } = responseMessage.data;
+
+        const chatMessage: ChatMessage = {
+          id: segment_id || `llm_${Date.now()}`,
+          text: response,
+          timestamp: new Date(),
+          isUser: false,
+          isPartial: false,
+          segmentId: segment_id,
+        };
+
+        addOrUpdateMessage(chatMessage);
+        setIsProcessing(false);
+      } else if (
+        (message as any).type === "detection" &&
+        (message as any).text
+      ) {
+        const detectionMessage = message as any as DetectionMessage;
+
+        // Notify detection handlers
+        detectionHandlersRef.current.forEach((handler) =>
+          handler(detectionMessage)
+        );
+
+        // Update current transcript if recording
+        if (vocals.isRecording) {
+          const { text } = detectionMessage;
+
+          // Debounce transcript updates
+          if (transcriptTimeoutRef.current) {
+            clearTimeout(transcriptTimeoutRef.current);
+          }
+
+          transcriptTimeoutRef.current = setTimeout(() => {
+            setCurrentTranscript(text);
+          }, transcriptDebounceMs);
+        }
+      } else if (
+        (message as any).type === "tts_audio" &&
+        (message as any).data
+      ) {
+        // Handle TTS audio with auto-play
+        const ttsData = (message as any).data;
+        vocals.addToQueue(ttsData);
+
+        if (autoPlayAudio && vocals.playbackState === "idle") {
+          setTimeout(() => {
+            if (vocals.playbackState === "idle") {
+              vocals.playAudio();
+            }
+          }, 10);
+        }
+      } else if (
+        (message as any).type === "audio_saved" &&
+        (message as any).filename
+      ) {
+        const audioSavedMessage = message as any as AudioSavedMessage;
+
+        // Notify audio saved handlers
+        audioSavedHandlersRef.current.forEach((handler) =>
+          handler(audioSavedMessage)
+        );
+      } else if (
+        (message as any).type === "transcription_status" &&
+        (message as any).data
+      ) {
+        // Update processing state based on transcription status
+        setIsProcessing(true);
+      }
+    },
+    [
+      vocals,
+      autoPlayAudio,
+      addOrUpdateMessage,
+      updateLastActivity,
+      transcriptDebounceMs,
+    ]
+  );
+
+  // Set up message handling
+  useEffect(() => {
+    const unsubscribe = vocals.onMessage(handleMessage);
+    return unsubscribe;
+  }, [vocals.onMessage, handleMessage]);
+
+  // Clear conversation on disconnect if enabled
+  useEffect(() => {
+    if (autoClearOnDisconnect && vocals.connectionState === "disconnected") {
+      clearConversation();
+    }
+  }, [vocals.connectionState, autoClearOnDisconnect, clearConversation]);
+
+  // Event handler registration
+  const onTranscription = useCallback(
+    (handler: (message: TranscriptionMessage) => void) => {
+      transcriptionHandlersRef.current.add(handler);
+      return () => transcriptionHandlersRef.current.delete(handler);
+    },
+    []
+  );
+
+  const onLLMResponse = useCallback(
+    (handler: (message: LLMResponseMessage) => void) => {
+      llmResponseHandlersRef.current.add(handler);
+      return () => llmResponseHandlersRef.current.delete(handler);
+    },
+    []
+  );
+
+  const onLLMStreaming = useCallback(
+    (handler: (message: LLMResponseStreamingMessage) => void) => {
+      llmStreamingHandlersRef.current.add(handler);
+      return () => llmStreamingHandlersRef.current.delete(handler);
+    },
+    []
+  );
+
+  const onDetection = useCallback(
+    (handler: (message: DetectionMessage) => void) => {
+      detectionHandlersRef.current.add(handler);
+      return () => detectionHandlersRef.current.delete(handler);
+    },
+    []
+  );
+
+  const onAudioSaved = useCallback(
+    (handler: (message: AudioSavedMessage) => void) => {
+      audioSavedHandlersRef.current.add(handler);
+      return () => audioSavedHandlersRef.current.delete(handler);
+    },
+    []
+  );
+
+  const onRawMessage = useCallback(
+    (handler: (message: WebSocketResponse) => void) => {
+      rawMessageHandlersRef.current.add(handler);
+      return () => rawMessageHandlersRef.current.delete(handler);
+    },
+    []
+  );
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (transcriptTimeoutRef.current) {
+        clearTimeout(transcriptTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  return {
+    // Include all vocals functionality
+    ...vocals,
+
+    // Conversation state
+    messages,
+    currentTranscript,
+    isProcessing,
+    lastActivity,
+
+    // Conversation methods
+    clearConversation,
+    addMessage,
+    updateMessage,
+    removeMessage,
+
+    // Enhanced event handlers
+    onTranscription,
+    onLLMResponse,
+    onLLMStreaming,
+    onDetection,
+    onAudioSaved,
+    onRawMessage,
+  };
+}
+
+// Configuration for transcription hook
+export interface UseVocalsTranscriptionConfig extends UseVocalsConfig {
+  /** Auto-clear transcript on disconnect (defaults to false) */
+  autoClearOnDisconnect?: boolean;
+  /** Debounce time for partial transcript updates in ms (defaults to 100) */
+  transcriptDebounceMs?: number;
+  /** Keep transcript history (defaults to true) */
+  keepHistory?: boolean;
+  /** Maximum number of transcript entries to keep (defaults to 50) */
+  maxHistory?: number;
+}
+
+// Transcript entry interface
+export interface TranscriptEntry {
+  id: string;
+  text: string;
+  confidence: number;
+  timestamp: Date;
+  isPartial: boolean;
+  segmentId: string;
+}
+
+// Return interface for transcription hook
+export interface UseVocalsTranscriptionReturn
+  extends Omit<UseVocalsReturn, "onMessage"> {
+  // Transcription state
+  currentTranscript: string;
+  transcriptHistory: TranscriptEntry[];
+  isTranscribing: boolean;
+  averageConfidence: number;
+
+  // Transcription methods
+  clearTranscript: () => void;
+  clearHistory: () => void;
+  getTranscriptText: () => string;
+  getHistoryText: () => string;
+
+  // Enhanced event handlers
+  onTranscription: (
+    handler: (message: TranscriptionMessage) => void
+  ) => () => void;
+  onDetection: (handler: (message: DetectionMessage) => void) => () => void;
+  onFinalTranscript: (handler: (entry: TranscriptEntry) => void) => () => void;
+  onRawMessage: (handler: (message: WebSocketResponse) => void) => () => void;
+}
+
+// Specialized hook for transcription functionality
+export function useVocalsTranscription(
+  config: UseVocalsTranscriptionConfig = {}
+): UseVocalsTranscriptionReturn {
+  const {
+    autoClearOnDisconnect = false,
+    transcriptDebounceMs = 100,
+    keepHistory = true,
+    maxHistory = 50,
+    ...vocalsConfig
+  } = config;
+
+  // Use the base vocals hook
+  const vocals = useVocals(vocalsConfig);
+
+  // Transcription state
+  const [currentTranscript, setCurrentTranscript] = useState<string>("");
+  const [transcriptHistory, setTranscriptHistory] = useState<TranscriptEntry[]>(
+    []
+  );
+  const [isTranscribing, setIsTranscribing] = useState<boolean>(false);
+  const [averageConfidence, setAverageConfidence] = useState<number>(0);
+
+  // Event handlers
+  const transcriptionHandlersRef = useRef<
+    Set<(message: TranscriptionMessage) => void>
+  >(new Set());
+  const detectionHandlersRef = useRef<Set<(message: DetectionMessage) => void>>(
+    new Set()
+  );
+  const finalTranscriptHandlersRef = useRef<
+    Set<(entry: TranscriptEntry) => void>
+  >(new Set());
+  const rawMessageHandlersRef = useRef<
+    Set<(message: WebSocketResponse) => void>
+  >(new Set());
+
+  // Debounced transcript update
+  const transcriptTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Helper to calculate average confidence
+  const calculateAverageConfidence = useCallback(
+    (history: TranscriptEntry[]) => {
+      if (history.length === 0) return 0;
+      const total = history.reduce((sum, entry) => sum + entry.confidence, 0);
+      return total / history.length;
+    },
+    []
+  );
+
+  // Helper to add transcript entry
+  const addTranscriptEntry = useCallback(
+    (entry: TranscriptEntry) => {
+      if (keepHistory) {
+        setTranscriptHistory((prev) => {
+          const newHistory = [...prev, entry];
+          const trimmedHistory =
+            newHistory.length > maxHistory
+              ? newHistory.slice(-maxHistory)
+              : newHistory;
+
+          // Update average confidence
+          setAverageConfidence(calculateAverageConfidence(trimmedHistory));
+
+          return trimmedHistory;
+        });
+      }
+    },
+    [keepHistory, maxHistory, calculateAverageConfidence]
+  );
+
+  // Transcription methods
+  const clearTranscript = useCallback(() => {
+    setCurrentTranscript("");
+    setIsTranscribing(false);
+  }, []);
+
+  const clearHistory = useCallback(() => {
+    setTranscriptHistory([]);
+    setAverageConfidence(0);
+  }, []);
+
+  const getTranscriptText = useCallback(() => {
+    return currentTranscript;
+  }, [currentTranscript]);
+
+  const getHistoryText = useCallback(() => {
+    return transcriptHistory
+      .filter((entry) => !entry.isPartial)
+      .map((entry) => entry.text)
+      .join(" ");
+  }, [transcriptHistory]);
+
+  // Message handler with transcription focus
+  const handleMessage = useCallback(
+    (message: WebSocketResponse) => {
+      // Notify raw message handlers
+      rawMessageHandlersRef.current.forEach((handler) => handler(message));
+
+      // Handle transcription messages
+      if ((message as any).type === "transcription" && (message as any).data) {
+        const transcriptionMessage = message as any as TranscriptionMessage;
+
+        // Notify transcription handlers
+        transcriptionHandlersRef.current.forEach((handler) =>
+          handler(transcriptionMessage)
+        );
+
+        // Update transcription state
+        const {
+          text,
+          is_partial,
+          segment_id,
+          confidence = 0,
+        } = transcriptionMessage.data;
+
+        setCurrentTranscript(text);
+        setIsTranscribing(is_partial);
+
+        // Create transcript entry
+        const entry: TranscriptEntry = {
+          id: segment_id,
+          text,
+          confidence,
+          timestamp: new Date(),
+          isPartial: is_partial,
+          segmentId: segment_id,
+        };
+
+        // Add to history if it's a final transcript
+        if (!is_partial) {
+          addTranscriptEntry(entry);
+
+          // Notify final transcript handlers
+          finalTranscriptHandlersRef.current.forEach((handler) =>
+            handler(entry)
+          );
+
+          // Clear current transcript after final
+          setCurrentTranscript("");
+          setIsTranscribing(false);
+        }
+      } else if (
+        (message as any).type === "detection" &&
+        (message as any).text
+      ) {
+        const detectionMessage = message as any as DetectionMessage;
+
+        // Notify detection handlers
+        detectionHandlersRef.current.forEach((handler) =>
+          handler(detectionMessage)
+        );
+
+        // Update current transcript if recording
+        if (vocals.isRecording) {
+          const { text } = detectionMessage;
+
+          // Debounce transcript updates
+          if (transcriptTimeoutRef.current) {
+            clearTimeout(transcriptTimeoutRef.current);
+          }
+
+          transcriptTimeoutRef.current = setTimeout(() => {
+            setCurrentTranscript(text);
+            setIsTranscribing(true);
+          }, transcriptDebounceMs);
+        }
+      }
+    },
+    [vocals.isRecording, addTranscriptEntry, transcriptDebounceMs]
+  );
+
+  // Set up message handling
+  useEffect(() => {
+    const unsubscribe = vocals.onMessage(handleMessage);
+    return unsubscribe;
+  }, [vocals.onMessage, handleMessage]);
+
+  // Clear transcript on disconnect if enabled
+  useEffect(() => {
+    if (autoClearOnDisconnect && vocals.connectionState === "disconnected") {
+      clearTranscript();
+      clearHistory();
+    }
+  }, [
+    vocals.connectionState,
+    autoClearOnDisconnect,
+    clearTranscript,
+    clearHistory,
+  ]);
+
+  // Event handler registration
+  const onTranscription = useCallback(
+    (handler: (message: TranscriptionMessage) => void) => {
+      transcriptionHandlersRef.current.add(handler);
+      return () => transcriptionHandlersRef.current.delete(handler);
+    },
+    []
+  );
+
+  const onDetection = useCallback(
+    (handler: (message: DetectionMessage) => void) => {
+      detectionHandlersRef.current.add(handler);
+      return () => detectionHandlersRef.current.delete(handler);
+    },
+    []
+  );
+
+  const onFinalTranscript = useCallback(
+    (handler: (entry: TranscriptEntry) => void) => {
+      finalTranscriptHandlersRef.current.add(handler);
+      return () => finalTranscriptHandlersRef.current.delete(handler);
+    },
+    []
+  );
+
+  const onRawMessage = useCallback(
+    (handler: (message: WebSocketResponse) => void) => {
+      rawMessageHandlersRef.current.add(handler);
+      return () => rawMessageHandlersRef.current.delete(handler);
+    },
+    []
+  );
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (transcriptTimeoutRef.current) {
+        clearTimeout(transcriptTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  return {
+    // Include all vocals functionality
+    ...vocals,
+
+    // Transcription state
+    currentTranscript,
+    transcriptHistory,
+    isTranscribing,
+    averageConfidence,
+
+    // Transcription methods
+    clearTranscript,
+    clearHistory,
+    getTranscriptText,
+    getHistoryText,
+
+    // Enhanced event handlers
+    onTranscription,
+    onDetection,
+    onFinalTranscript,
+    onRawMessage,
+  };
+}
+
+// Configuration for visualization hook
+export interface UseVocalsVisualizationConfig extends UseVocalsConfig {
+  /** Buffer size for audio data (defaults to 1024) */
+  bufferSize?: number;
+  /** Smoothing factor for amplitude (0-1, defaults to 0.8) */
+  smoothing?: number;
+  /** FFT size for frequency analysis (defaults to 2048) */
+  fftSize?: number;
+  /** Enable frequency analysis (defaults to true) */
+  enableFrequencyAnalysis?: boolean;
+  /** Sample rate for visualization (defaults to 44100) */
+  visualizationSampleRate?: number;
+}
+
+// Audio visualization data
+export interface AudioVisualizationData {
+  // Time domain data
+  waveform: number[];
+  amplitude: number;
+  smoothedAmplitude: number;
+
+  // Frequency domain data (if enabled)
+  frequencyData?: Uint8Array;
+  frequencyBins?: number[];
+
+  // Metadata
+  timestamp: number;
+  sampleRate: number;
+  bufferSize: number;
+}
+
+// Return interface for visualization hook
+export interface UseVocalsVisualizationReturn extends UseVocalsReturn {
+  // Visualization state
+  visualizationData: AudioVisualizationData | null;
+  isVisualizing: boolean;
+
+  // Visualization methods
+  startVisualization: () => void;
+  stopVisualization: () => void;
+  resetVisualization: () => void;
+
+  // Enhanced event handlers
+  onVisualizationData: (
+    handler: (data: AudioVisualizationData) => void
+  ) => () => void;
+  onAmplitudeChange: (handler: (amplitude: number) => void) => () => void;
+}
+
+// Specialized hook for audio visualization
+export function useVocalsVisualization(
+  config: UseVocalsVisualizationConfig = {}
+): UseVocalsVisualizationReturn {
+  const {
+    bufferSize = 1024,
+    smoothing = 0.8,
+    fftSize = 2048,
+    enableFrequencyAnalysis = true,
+    visualizationSampleRate = 44100,
+    ...vocalsConfig
+  } = config;
+
+  // Use the base vocals hook
+  const vocals = useVocals(vocalsConfig);
+
+  // Visualization state
+  const [visualizationData, setVisualizationData] =
+    useState<AudioVisualizationData | null>(null);
+  const [isVisualizing, setIsVisualizing] = useState<boolean>(false);
+
+  // Visualization refs
+  const smoothedAmplitudeRef = useRef<number>(0);
+  const visualizationFrameRef = useRef<number | null>(null);
+
+  // Event handlers
+  const visualizationDataHandlersRef = useRef<
+    Set<(data: AudioVisualizationData) => void>
+  >(new Set());
+  const amplitudeChangeHandlersRef = useRef<Set<(amplitude: number) => void>>(
+    new Set()
+  );
+
+  // Audio analysis functions
+  const analyzeAudioData = useCallback(
+    (audioData: number[]) => {
+      if (!isVisualizing) return;
+
+      // Calculate amplitude
+      const rawAmplitude =
+        audioData.reduce((sum, sample) => sum + Math.abs(sample), 0) /
+        audioData.length;
+
+      // Apply smoothing
+      smoothedAmplitudeRef.current =
+        smoothedAmplitudeRef.current * smoothing +
+        rawAmplitude * (1 - smoothing);
+
+      // Prepare waveform data (downsample if needed)
+      const waveform =
+        audioData.length > bufferSize
+          ? audioData
+              .filter(
+                (_, i) => i % Math.floor(audioData.length / bufferSize) === 0
+              )
+              .slice(0, bufferSize)
+          : audioData;
+
+      // Frequency analysis (if enabled)
+      let frequencyData: Uint8Array | undefined;
+      let frequencyBins: number[] | undefined;
+
+      if (enableFrequencyAnalysis && audioData.length >= fftSize) {
+        // Simple FFT approximation for frequency analysis
+        // In a real implementation, you'd use a proper FFT library
+        const nyquist = visualizationSampleRate / 2;
+        const binSize = nyquist / (fftSize / 2);
+
+        frequencyBins = [];
+        for (let i = 0; i < fftSize / 2; i++) {
+          frequencyBins.push(i * binSize);
+        }
+
+        // Simplified frequency analysis - you'd want a proper FFT here
+        frequencyData = new Uint8Array(fftSize / 2);
+        for (let i = 0; i < frequencyData.length; i++) {
+          // This is a simplified approximation
+          const startIndex = Math.floor(
+            (i * audioData.length) / frequencyData.length
+          );
+          const endIndex = Math.floor(
+            ((i + 1) * audioData.length) / frequencyData.length
+          );
+          const segment = audioData.slice(startIndex, endIndex);
+          const amplitude =
+            segment.reduce((sum, sample) => sum + Math.abs(sample), 0) /
+            segment.length;
+          frequencyData[i] = Math.min(255, Math.floor(amplitude * 255));
+        }
+      }
+
+      // Create visualization data
+      const data: AudioVisualizationData = {
+        waveform,
+        amplitude: rawAmplitude,
+        smoothedAmplitude: smoothedAmplitudeRef.current,
+        frequencyData,
+        frequencyBins,
+        timestamp: Date.now(),
+        sampleRate: visualizationSampleRate,
+        bufferSize: waveform.length,
+      };
+
+      setVisualizationData(data);
+
+      // Notify handlers
+      visualizationDataHandlersRef.current.forEach((handler) => handler(data));
+      amplitudeChangeHandlersRef.current.forEach((handler) =>
+        handler(smoothedAmplitudeRef.current)
+      );
+    },
+    [
+      isVisualizing,
+      bufferSize,
+      smoothing,
+      fftSize,
+      enableFrequencyAnalysis,
+      visualizationSampleRate,
+    ]
+  );
+
+  // Visualization methods
+  const startVisualization = useCallback(() => {
+    setIsVisualizing(true);
+  }, []);
+
+  const stopVisualization = useCallback(() => {
+    setIsVisualizing(false);
+    if (visualizationFrameRef.current) {
+      cancelAnimationFrame(visualizationFrameRef.current);
+      visualizationFrameRef.current = null;
+    }
+  }, []);
+
+  const resetVisualization = useCallback(() => {
+    setVisualizationData(null);
+    smoothedAmplitudeRef.current = 0;
+    if (visualizationFrameRef.current) {
+      cancelAnimationFrame(visualizationFrameRef.current);
+      visualizationFrameRef.current = null;
+    }
+  }, []);
+
+  // Set up audio data handling
+  useEffect(() => {
+    const unsubscribe = vocals.onAudioData(analyzeAudioData);
+    return unsubscribe;
+  }, [vocals.onAudioData, analyzeAudioData]);
+
+  // Auto-start visualization when recording starts
+  useEffect(() => {
+    if (vocals.isRecording && !isVisualizing) {
+      startVisualization();
+    } else if (!vocals.isRecording && isVisualizing) {
+      stopVisualization();
+    }
+  }, [
+    vocals.isRecording,
+    isVisualizing,
+    startVisualization,
+    stopVisualization,
+  ]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (visualizationFrameRef.current) {
+        cancelAnimationFrame(visualizationFrameRef.current);
+      }
+    };
+  }, []);
+
+  // Event handler registration
+  const onVisualizationData = useCallback(
+    (handler: (data: AudioVisualizationData) => void) => {
+      visualizationDataHandlersRef.current.add(handler);
+      return () => visualizationDataHandlersRef.current.delete(handler);
+    },
+    []
+  );
+
+  const onAmplitudeChange = useCallback(
+    (handler: (amplitude: number) => void) => {
+      amplitudeChangeHandlersRef.current.add(handler);
+      return () => amplitudeChangeHandlersRef.current.delete(handler);
+    },
+    []
+  );
+
+  return {
+    // Include all vocals functionality
+    ...vocals,
+
+    // Visualization state
+    visualizationData,
+    isVisualizing,
+
+    // Visualization methods
+    startVisualization,
+    stopVisualization,
+    resetVisualization,
+
+    // Enhanced event handlers
+    onVisualizationData,
+    onAmplitudeChange,
   };
 }

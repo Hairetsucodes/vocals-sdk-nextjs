@@ -138,3 +138,110 @@ export interface AudioDevice {
   label: string;
   groupId: string;
 }
+
+// Specific message types for better type safety
+export interface TranscriptionMessage {
+  type: "transcription";
+  data: {
+    text: string;
+    is_partial: boolean;
+    segment_id: string;
+    confidence?: number;
+    timestamp?: number;
+  };
+}
+
+export interface LLMResponseStreamingMessage {
+  type: "llm_response_streaming";
+  data: {
+    token: string;
+    accumulated_response: string;
+    is_complete: boolean;
+    segment_id: string;
+    timestamp?: number;
+  };
+}
+
+export interface LLMResponseMessage {
+  type: "llm_response";
+  data: {
+    response: string;
+    original_text: string;
+    segment_id: string;
+    timestamp?: number;
+  };
+}
+
+export interface DetectionMessage {
+  type: "detection";
+  text: string;
+  confidence: number;
+  timestamp?: number;
+}
+
+export interface TranscriptionStatusMessage {
+  type: "transcription_status";
+  data: TranscriptionStatus;
+}
+
+export interface AudioSavedMessage {
+  type: "audio_saved";
+  filename: string;
+  timestamp?: number;
+}
+
+export interface TTSAudioMessage {
+  type: "tts_audio";
+  data: {
+    text: string;
+    audio_data: string; // Base64 encoded WAV
+    sample_rate: number;
+    segment_id: string;
+    sentence_number: number;
+    generation_time_ms: number;
+    format: string;
+    duration_seconds: number;
+  };
+}
+
+export interface SpeechInterruptionMessage {
+  type: "speech_interruption";
+  data: {
+    segment_id: string;
+    start_time: number;
+    reason: "new_speech_segment" | "speech_segment_merged" | string;
+    connection_id?: number;
+    timestamp: number;
+  };
+}
+
+// Union type for all specific message types
+export type VocalsWebSocketMessage =
+  | TranscriptionMessage
+  | LLMResponseStreamingMessage
+  | LLMResponseMessage
+  | DetectionMessage
+  | TranscriptionStatusMessage
+  | AudioSavedMessage
+  | TTSAudioMessage
+  | SpeechInterruptionMessage
+  | WebSocketResponse; // Fallback for other message types
+
+// Chat message interface for conversation management
+export interface ChatMessage {
+  id: string;
+  text: string;
+  timestamp: Date;
+  isUser: boolean;
+  isPartial: boolean;
+  segmentId?: string;
+  confidence?: number;
+}
+
+// Conversation state interface
+export interface ConversationState {
+  messages: ChatMessage[];
+  currentTranscript: string;
+  isProcessing: boolean;
+  lastActivity: Date | null;
+}
