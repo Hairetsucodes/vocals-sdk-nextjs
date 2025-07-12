@@ -1,189 +1,481 @@
-# Vocals SDK - Simplified Usage Examples
+# Vocals SDK for Next.js - Usage Examples
 
-The Vocals SDK now includes high-level hooks that abstract away complex message handling and state management. Here's how to use them:
+## Table of Contents
 
-## 1. useVocalsConversation - Complete Conversation Management
+1. [Basic Usage](#basic-usage)
+2. [AEC (Acoustic Echo Cancellation) Features](#aec-acoustic-echo-cancellation-features)
+3. [Advanced Configuration](#advanced-configuration)
+4. [Conversation Hook](#conversation-hook)
+5. [Transcription Hook](#transcription-hook)
+6. [Visualization Hook](#visualization-hook)
 
-This hook handles all the complex message parsing and state management you were doing manually.
+## Basic Usage
 
-**Before (Your Complex Code):**
+### Simple Voice Chat Component
 
-```typescript
-// Your original complex implementation with ~100 lines of useEffect and message handling
-const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
-const [currentTranscript, setCurrentTranscript] = useState("");
+```tsx
+// components/VoiceChat.tsx
+import { useVocals } from "@/lib/vocals-sdk";
 
-useEffect(() => {
-  const unsubscribe = onMessage((message) => {
-    if (message.type === "transcription" && message.data) {
-      setChatMessages((prev) => {
-        const existingIndex = prev.findIndex(
-          (msg) => msg.id === message.data.segment_id
-        );
-        // ... complex deduplication logic
-      });
-    } else if (message.type === "llm_response_streaming" && message.data) {
-      // ... complex streaming logic
-    }
-    // ... many more message types
-  });
-  return unsubscribe;
-}, [onMessage, isRecording]);
-```
-
-**After (Simplified with useVocalsConversation):**
-
-```typescript
-import { useVocalsConversation } from "@vocals/nextjs";
-
-export function ConversationComponent() {
+export default function VoiceChat() {
   const {
-    // Connection state
     isConnected,
     isRecording,
-
-    // Conversation state (automatically managed!)
-    messages, // Array of ChatMessage with automatic deduplication
-    currentTranscript, // Current partial transcript
-    isProcessing, // Whether AI is processing
-
-    // Methods
+    isPlaying,
     startRecording,
     stopRecording,
-    clearConversation,
+    playAudio,
+    pauseAudio,
+    clearQueue,
+    error,
+  } = useVocals();
 
-    // Optional: specific event handlers if needed
-    onTranscription,
-    onLLMResponse,
-  } = useVocalsConversation({
-    autoPlayAudio: true, // Auto-play TTS audio
-    maxMessages: 100, // Limit conversation length
-    autoClearOnDisconnect: false,
+  return (
+    <div className="voice-chat">
+      <div className="status">
+        <span>Connected: {isConnected ? "✅" : "❌"}</span>
+        <span>Recording: {isRecording ? "🎤" : "⏹️"}</span>
+        <span>Playing: {isPlaying ? "🔊" : "🔇"}</span>
+      </div>
+
+      <div className="controls">
+        <button
+          onClick={startRecording}
+          disabled={isRecording}
+          className="bg-blue-500 text-white px-4 py-2 rounded"
+        >
+          Start Recording
+        </button>
+        <button
+          onClick={stopRecording}
+          disabled={!isRecording}
+          className="bg-red-500 text-white px-4 py-2 rounded"
+        >
+          Stop Recording
+        </button>
+        <button
+          onClick={playAudio}
+          className="bg-green-500 text-white px-4 py-2 rounded"
+        >
+          Play Audio
+        </button>
+        <button
+          onClick={pauseAudio}
+          className="bg-yellow-500 text-white px-4 py-2 rounded"
+        >
+          Pause Audio
+        </button>
+        <button
+          onClick={clearQueue}
+          className="bg-gray-500 text-white px-4 py-2 rounded"
+        >
+          Clear Queue
+        </button>
+      </div>
+
+      {error && (
+        <div className="error text-red-500 mt-2">Error: {error.message}</div>
+      )}
+    </div>
+  );
+}
+```
+
+## AEC (Acoustic Echo Cancellation) Features
+
+### 1. Basic AEC Usage
+
+```tsx
+// components/BasicAECChat.tsx
+import { useVocals, AECPresets } from "@/lib/vocals-sdk";
+
+export default function BasicAECChat() {
+  const vocals = useVocals({
+    audioConfig: AECPresets.basic(),
   });
 
   return (
-    <div>
-      <div className="messages">
-        {messages.map((msg) => (
-          <div key={msg.id} className={msg.isUser ? "user" : "ai"}>
-            {msg.text}
-            {msg.isPartial && <span className="partial">...</span>}
-          </div>
-        ))}
-      </div>
+    <div className="aec-chat">
+      <h3>Basic AEC Voice Chat</h3>
+      <p>AEC Enabled: {vocals.isAECEnabled ? "✅" : "❌"}</p>
+      {/* ... rest of your UI */}
+    </div>
+  );
+}
+```
 
-      {currentTranscript && (
-        <div className="current-transcript">{currentTranscript}</div>
+### 2. Enhanced AEC with WebRTC
+
+```tsx
+// components/EnhancedAECChat.tsx
+import { useVocals, AECPresets } from "@/lib/vocals-sdk";
+
+export default function EnhancedAECChat() {
+  const vocals = useVocals({
+    audioConfig: AECPresets.enhanced(),
+  });
+
+  return (
+    <div className="enhanced-aec-chat">
+      <h3>Enhanced AEC with WebRTC</h3>
+      <p>
+        Using WebRTC Processing:{" "}
+        {vocals.audioConfig.useWebRTCProcessing ? "✅" : "❌"}
+      </p>
+      <p>Sample Rate: {vocals.audioConfig.sampleRate}Hz</p>
+      <p>
+        Echo Cancellation: {vocals.audioConfig.echoCancellation ? "✅" : "❌"}
+      </p>
+      <p>
+        Noise Suppression: {vocals.audioConfig.noiseSuppression ? "✅" : "❌"}
+      </p>
+      {/* ... rest of your UI */}
+    </div>
+  );
+}
+```
+
+### 3. Using Pre-configured AEC Hooks
+
+```tsx
+// components/PreConfiguredAECChat.tsx
+import { useVocalsEnhancedAEC } from "@/lib/vocals-sdk";
+
+export default function PreConfiguredAECChat() {
+  // This automatically uses enhanced AEC settings
+  const vocals = useVocalsEnhancedAEC();
+
+  return (
+    <div className="pre-configured-aec">
+      <h3>Pre-configured Enhanced AEC</h3>
+      {/* ... your UI components */}
+    </div>
+  );
+}
+```
+
+### 4. Custom AEC Configuration
+
+```tsx
+// components/CustomAECChat.tsx
+import { useVocals, AECUtils } from "@/lib/vocals-sdk";
+
+export default function CustomAECChat() {
+  const customAECConfig = AECUtils.createConfig({
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+    sampleRate: 48000,
+    channelCount: 1,
+    useWebRTCProcessing: true,
+    advancedConstraints: {
+      echoCancellationType: "aec3",
+      latency: 0.01,
+    },
+  });
+
+  const vocals = useVocals({
+    audioConfig: customAECConfig,
+  });
+
+  return (
+    <div className="custom-aec-chat">
+      <h3>Custom AEC Configuration</h3>
+      {/* ... your UI */}
+    </div>
+  );
+}
+```
+
+### 5. AEC Testing and Device Management
+
+```tsx
+// components/AECTestingPanel.tsx
+import { useState, useEffect } from "react";
+import { useVocals, AECUtils } from "@/lib/vocals-sdk";
+
+export default function AECTestingPanel() {
+  const [aecSupport, setAecSupport] = useState<any>(null);
+  const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedDevice, setSelectedDevice] = useState<string>("");
+
+  const vocals = useVocals();
+
+  useEffect(() => {
+    // Test AEC support on component mount
+    AECUtils.testAECSupport().then(setAecSupport);
+
+    // Get available audio devices
+    vocals.getAudioDevices().then(setAudioDevices);
+  }, []);
+
+  const handleDeviceChange = async (deviceId: string) => {
+    setSelectedDevice(deviceId);
+    await vocals.setAudioDevice(deviceId);
+  };
+
+  const testConstraints = async () => {
+    const constraints = {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    };
+
+    const supported = await vocals.testAudioConstraints(constraints);
+    alert(`Constraints supported: ${supported ? "Yes" : "No"}`);
+  };
+
+  return (
+    <div className="aec-testing-panel">
+      <h3>AEC Testing Panel</h3>
+
+      {aecSupport && (
+        <div className="aec-support">
+          <h4>AEC Support Status</h4>
+          <p>Overall Support: {aecSupport.supported ? "✅" : "❌"}</p>
+          <p>
+            Echo Cancellation:{" "}
+            {aecSupport.features.echoCancellation ? "✅" : "❌"}
+          </p>
+          <p>
+            Noise Suppression:{" "}
+            {aecSupport.features.noiseSuppression ? "✅" : "❌"}
+          </p>
+          <p>
+            Auto Gain Control:{" "}
+            {aecSupport.features.autoGainControl ? "✅" : "❌"}
+          </p>
+          <p>WebRTC Support: {aecSupport.features.webRTC ? "✅" : "❌"}</p>
+        </div>
       )}
 
-      <button onClick={isRecording ? stopRecording : startRecording}>
-        {isRecording ? "Stop" : "Start"}
+      <div className="device-selection">
+        <h4>Audio Device Selection</h4>
+        <select
+          value={selectedDevice}
+          onChange={(e) => handleDeviceChange(e.target.value)}
+          className="border rounded p-2"
+        >
+          <option value="">Select Device</option>
+          {audioDevices.map((device) => (
+            <option key={device.deviceId} value={device.deviceId}>
+              {device.label || `Device ${device.deviceId.slice(0, 8)}...`}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      <button
+        onClick={testConstraints}
+        className="bg-blue-500 text-white px-4 py-2 rounded mt-2"
+      >
+        Test Audio Constraints
       </button>
     </div>
   );
 }
 ```
 
-## 2. useVocalsTranscription - Just Transcription
+## Advanced Configuration
 
-For cases where you only need transcription functionality:
+### Low-Latency Real-time Chat
 
-```typescript
-import { useVocalsTranscription } from "@vocals/nextjs";
+```tsx
+// components/LowLatencyChat.tsx
+import { useVocals, AECPresets } from "@/lib/vocals-sdk";
 
-export function TranscriptionComponent() {
-  const {
-    // Transcription state
-    currentTranscript, // Current partial transcript
-    transcriptHistory, // Array of final transcripts
-    isTranscribing, // Whether actively transcribing
-    averageConfidence, // Average confidence score
-
-    // Methods
-    startRecording,
-    stopRecording,
-    clearTranscript,
-    getHistoryText, // Get all transcripts as single text
-
-    // Event handlers
-    onFinalTranscript, // Called when transcript is finalized
-  } = useVocalsTranscription({
-    keepHistory: true,
-    maxHistory: 50,
-    transcriptDebounceMs: 100,
+export default function LowLatencyChat() {
+  const vocals = useVocals({
+    audioConfig: AECPresets.lowLatency(),
+    maxReconnectAttempts: 5,
+    reconnectDelay: 500,
   });
 
-  // Handle final transcripts
-  useEffect(() => {
-    const unsubscribe = onFinalTranscript((transcript) => {
-      console.log("Final transcript:", transcript.text);
-      console.log("Confidence:", transcript.confidence);
-    });
-    return unsubscribe;
-  }, [onFinalTranscript]);
+  return (
+    <div className="low-latency-chat">
+      <h3>Low-Latency Voice Chat</h3>
+      <p>Optimized for real-time interactions</p>
+      <p>Latency: ~5ms</p>
+      {/* ... your UI */}
+    </div>
+  );
+}
+```
+
+### High-Fidelity Audio Chat
+
+```tsx
+// components/HighFidelityChat.tsx
+import { useVocals, AECPresets } from "@/lib/vocals-sdk";
+
+export default function HighFidelityChat() {
+  const vocals = useVocals({
+    audioConfig: AECPresets.highFidelity(),
+  });
 
   return (
-    <div>
-      {currentTranscript && (
-        <div className="live-transcript">
-          {currentTranscript}
-          {isTranscribing && <span className="blinking">...</span>}
-        </div>
-      )}
+    <div className="high-fidelity-chat">
+      <h3>High-Fidelity Audio Chat</h3>
+      <p>Sample Rate: {vocals.audioConfig.sampleRate}Hz</p>
+      <p>Channels: {vocals.audioConfig.channelCount}</p>
+      <p>Optimized for music and high-quality audio</p>
+      {/* ... your UI */}
+    </div>
+  );
+}
+```
 
-      <div className="transcript-history">
-        {transcriptHistory.map((entry) => (
-          <div key={entry.id} className="transcript-entry">
-            {entry.text}
-            <span className="confidence">
-              {Math.round(entry.confidence * 100)}%
+## Conversation Hook
+
+```tsx
+// components/ConversationChat.tsx
+import { useVocalsConversation } from "@/lib/vocals-sdk";
+
+export default function ConversationChat() {
+  const {
+    messages,
+    currentTranscript,
+    isProcessing,
+    isRecording,
+    startRecording,
+    stopRecording,
+    clearConversation,
+    onTranscription,
+    onLLMResponse,
+  } = useVocalsConversation({
+    audioConfig: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    },
+  });
+
+  return (
+    <div className="conversation-chat">
+      <div className="messages">
+        {messages.map((message) => (
+          <div
+            key={message.id}
+            className={`message ${message.isUser ? "user" : "assistant"}`}
+          >
+            <span className="text">{message.text}</span>
+            <span className="timestamp">
+              {message.timestamp.toLocaleTimeString()}
             </span>
           </div>
         ))}
       </div>
 
+      {currentTranscript && (
+        <div className="current-transcript">
+          <span>Current: {currentTranscript}</span>
+        </div>
+      )}
+
       <div className="controls">
-        <button onClick={isRecording ? stopRecording : startRecording}>
-          {isRecording ? "Stop" : "Start"}
+        <button onClick={startRecording} disabled={isRecording}>
+          {isRecording ? "Recording..." : "Start Recording"}
         </button>
-        <button onClick={clearTranscript}>Clear</button>
-        <div>Avg Confidence: {Math.round(averageConfidence * 100)}%</div>
+        <button onClick={stopRecording} disabled={!isRecording}>
+          Stop Recording
+        </button>
+        <button onClick={clearConversation}>Clear Conversation</button>
       </div>
     </div>
   );
 }
 ```
 
-## 3. useVocalsVisualization - Audio Visualization
+## Transcription Hook
 
-For audio visualization without the complex audio data handling:
+```tsx
+// components/TranscriptionPanel.tsx
+import { useVocalsTranscription } from "@/lib/vocals-sdk";
 
-```typescript
-import { useVocalsVisualization } from "@vocals/nextjs";
+export default function TranscriptionPanel() {
+  const {
+    currentTranscript,
+    transcriptHistory,
+    isTranscribing,
+    averageConfidence,
+    isRecording,
+    startRecording,
+    stopRecording,
+    clearTranscript,
+    clearHistory,
+    getHistoryText,
+  } = useVocalsTranscription({
+    audioConfig: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    },
+  });
 
-export function AudioVisualizerComponent() {
+  return (
+    <div className="transcription-panel">
+      <div className="status">
+        <span>Recording: {isRecording ? "🎤" : "⏹️"}</span>
+        <span>Transcribing: {isTranscribing ? "✍️" : "💤"}</span>
+        <span>Confidence: {(averageConfidence * 100).toFixed(1)}%</span>
+      </div>
+
+      <div className="current-transcript">
+        <h4>Current Transcript:</h4>
+        <p>{currentTranscript || "No current transcript"}</p>
+      </div>
+
+      <div className="transcript-history">
+        <h4>Transcript History:</h4>
+        <div className="history-text">
+          {getHistoryText() || "No history yet"}
+        </div>
+      </div>
+
+      <div className="controls">
+        <button onClick={startRecording} disabled={isRecording}>
+          Start Recording
+        </button>
+        <button onClick={stopRecording} disabled={!isRecording}>
+          Stop Recording
+        </button>
+        <button onClick={clearTranscript}>Clear Current</button>
+        <button onClick={clearHistory}>Clear History</button>
+      </div>
+    </div>
+  );
+}
+```
+
+## Visualization Hook
+
+```tsx
+// components/AudioVisualizer.tsx
+import { useVocalsVisualization } from "@/lib/vocals-sdk";
+import { useEffect, useRef } from "react";
+
+export default function AudioVisualizer() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const {
-    // Visualization state
-    visualizationData, // Current audio visualization data
-    isVisualizing, // Whether visualization is active
-
-    // Methods
-    startVisualization,
-    stopVisualization,
-
-    // Inherited from base hook
+    visualizationData,
+    isVisualizing,
+    isRecording,
     startRecording,
     stopRecording,
-    isRecording,
+    startVisualization,
+    stopVisualization,
   } = useVocalsVisualization({
-    bufferSize: 1024,
+    audioConfig: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    },
+    bufferSize: 2048,
     smoothing: 0.8,
     enableFrequencyAnalysis: true,
   });
 
-  // Draw visualization
   useEffect(() => {
     if (!visualizationData || !canvasRef.current) return;
 
@@ -195,30 +487,37 @@ export function AudioVisualizerComponent() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     // Draw waveform
-    const { waveform, amplitude } = visualizationData;
-    ctx.beginPath();
-    ctx.strokeStyle = `rgba(0, 255, 0, ${amplitude * 2})`;
+    ctx.strokeStyle = "#00ff00";
     ctx.lineWidth = 2;
+    ctx.beginPath();
+
+    const { waveform } = visualizationData;
+    const sliceWidth = canvas.width / waveform.length;
+    let x = 0;
 
     for (let i = 0; i < waveform.length; i++) {
-      const x = (i / waveform.length) * canvas.width;
-      const y = ((waveform[i] + 1) * canvas.height) / 2;
+      const v = waveform[i] * 0.5;
+      const y = (v * canvas.height) / 2 + canvas.height / 2;
 
       if (i === 0) {
         ctx.moveTo(x, y);
       } else {
         ctx.lineTo(x, y);
       }
+
+      x += sliceWidth;
     }
+
     ctx.stroke();
 
     // Draw frequency bars if available
     if (visualizationData.frequencyData) {
       const barWidth = canvas.width / visualizationData.frequencyData.length;
+      ctx.fillStyle = "#ff0000";
+
       for (let i = 0; i < visualizationData.frequencyData.length; i++) {
         const barHeight =
           (visualizationData.frequencyData[i] / 255) * canvas.height;
-        ctx.fillStyle = `rgba(255, 0, 0, 0.7)`;
         ctx.fillRect(
           i * barWidth,
           canvas.height - barHeight,
@@ -230,116 +529,303 @@ export function AudioVisualizerComponent() {
   }, [visualizationData]);
 
   return (
-    <div>
+    <div className="audio-visualizer">
       <canvas
         ref={canvasRef}
         width={800}
         height={200}
-        style={{ border: "1px solid #ccc" }}
+        className="border border-gray-300 rounded"
       />
 
-      <div className="controls">
-        <button onClick={isRecording ? stopRecording : startRecording}>
-          {isRecording ? "Stop Recording" : "Start Recording"}
-        </button>
-
+      <div className="controls mt-4">
         <button
-          onClick={isVisualizing ? stopVisualization : startVisualization}
+          onClick={startRecording}
+          disabled={isRecording}
+          className="bg-blue-500 text-white px-4 py-2 rounded mr-2"
         >
-          {isVisualizing ? "Stop Visualization" : "Start Visualization"}
+          Start Recording
         </button>
-
-        {visualizationData && (
-          <div className="audio-info">
-            <div>
-              Amplitude: {Math.round(visualizationData.amplitude * 100)}%
-            </div>
-            <div>
-              Smoothed: {Math.round(visualizationData.smoothedAmplitude * 100)}%
-            </div>
-          </div>
-        )}
+        <button
+          onClick={stopRecording}
+          disabled={!isRecording}
+          className="bg-red-500 text-white px-4 py-2 rounded mr-2"
+        >
+          Stop Recording
+        </button>
+        <button
+          onClick={startVisualization}
+          disabled={isVisualizing}
+          className="bg-green-500 text-white px-4 py-2 rounded mr-2"
+        >
+          Start Visualization
+        </button>
+        <button
+          onClick={stopVisualization}
+          disabled={!isVisualizing}
+          className="bg-yellow-500 text-white px-4 py-2 rounded"
+        >
+          Stop Visualization
+        </button>
       </div>
+
+      {visualizationData && (
+        <div className="audio-info mt-4">
+          <p>Amplitude: {visualizationData.amplitude.toFixed(4)}</p>
+          <p>
+            Smoothed Amplitude: {visualizationData.smoothedAmplitude.toFixed(4)}
+          </p>
+          <p>Sample Rate: {visualizationData.sampleRate}Hz</p>
+          <p>Buffer Size: {visualizationData.bufferSize}</p>
+        </div>
+      )}
     </div>
   );
 }
 ```
 
-## 4. Combining Multiple Hooks
+## API Routes
 
-You can use multiple hooks together for more complex functionality:
+### WebSocket Token Endpoint
 
 ```typescript
-import { useVocalsConversation, useVocalsVisualization } from "@vocals/nextjs";
+// pages/api/wstoken.ts or app/api/wstoken/route.ts
+import { NextApiRequest, NextApiResponse } from "next";
 
-export function AdvancedVoiceChat() {
-  // Main conversation logic
-  const conversation = useVocalsConversation({
-    autoPlayAudio: true,
-    maxMessages: 100,
+export default async function handler(
+  req: NextApiRequest,
+  res: NextApiResponse
+) {
+  if (req.method !== "POST") {
+    return res.status(405).json({ error: "Method not allowed" });
+  }
+
+  try {
+    // Your token generation logic here
+    const token = await generateVocalsToken();
+    const expiresAt = Date.now() + 60 * 60 * 1000; // 1 hour
+
+    res.status(200).json({
+      token,
+      expiresAt,
+    });
+  } catch (error) {
+    res.status(500).json({ error: "Failed to generate token" });
+  }
+}
+
+async function generateVocalsToken(): Promise<string> {
+  // Implement your token generation logic
+  // This should call your backend to get a valid WebSocket token
+  return "your-generated-token";
+}
+```
+
+## Environment Variables
+
+```env
+# .env.local
+NEXT_PUBLIC_VOCALS_WS_ENDPOINT=wss://api.vocals.dev/v1/stream/conversation
+VOCALS_API_KEY=your-api-key-here
+```
+
+## Complete Example with All Features
+
+```tsx
+// components/CompleteVoiceChat.tsx
+import { useState, useEffect } from "react";
+import {
+  useVocals,
+  AECPresets,
+  AECUtils,
+  type AudioProcessingConfig,
+} from "@/lib/vocals-sdk";
+
+export default function CompleteVoiceChat() {
+  const [aecConfig, setAecConfig] = useState<AudioProcessingConfig>(
+    AECPresets.basic()
+  );
+  const [aecSupport, setAecSupport] = useState<any>(null);
+
+  const vocals = useVocals({
+    audioConfig: aecConfig,
+    autoConnect: true,
   });
 
-  // Audio visualization
-  const visualization = useVocalsVisualization({
-    bufferSize: 512,
-    smoothing: 0.9,
-  });
+  useEffect(() => {
+    // Test AEC support and get recommended config
+    AECUtils.testAECSupport().then(async (support) => {
+      setAecSupport(support);
+
+      if (support.supported) {
+        const recommendedConfig = await AECUtils.getRecommendedConfig();
+        setAecConfig(recommendedConfig);
+      }
+    });
+  }, []);
+
+  const switchAECPreset = (preset: keyof typeof AECPresets) => {
+    setAecConfig(AECPresets[preset]());
+  };
 
   return (
-    <div>
-      {/* Audio visualizer */}
-      <AudioVisualizer data={visualization.visualizationData} />
+    <div className="complete-voice-chat p-6">
+      <h1 className="text-3xl font-bold mb-6">Complete Voice Chat with AEC</h1>
 
-      {/* Conversation */}
-      <ConversationDisplay messages={conversation.messages} />
+      {/* AEC Configuration Panel */}
+      <div className="aec-config mb-6 p-4 border rounded">
+        <h3 className="text-xl font-semibold mb-4">AEC Configuration</h3>
 
-      {/* Current transcript */}
-      {conversation.currentTranscript && (
-        <div className="live-transcript">{conversation.currentTranscript}</div>
-      )}
+        <div className="preset-buttons mb-4">
+          <button
+            onClick={() => switchAECPreset("basic")}
+            className="mr-2 px-3 py-1 bg-blue-500 text-white rounded"
+          >
+            Basic
+          </button>
+          <button
+            onClick={() => switchAECPreset("enhanced")}
+            className="mr-2 px-3 py-1 bg-green-500 text-white rounded"
+          >
+            Enhanced
+          </button>
+          <button
+            onClick={() => switchAECPreset("lowLatency")}
+            className="mr-2 px-3 py-1 bg-yellow-500 text-white rounded"
+          >
+            Low Latency
+          </button>
+          <button
+            onClick={() => switchAECPreset("highFidelity")}
+            className="mr-2 px-3 py-1 bg-purple-500 text-white rounded"
+          >
+            High Fidelity
+          </button>
+        </div>
 
-      {/* Controls */}
-      <div className="controls">
-        <button
-          onClick={
-            conversation.isRecording
-              ? conversation.stopRecording
-              : conversation.startRecording
-          }
-          disabled={!conversation.isConnected}
-        >
-          {conversation.isRecording ? "Stop" : "Start"}
-        </button>
-
-        <button onClick={conversation.clearConversation}>
-          Clear Conversation
-        </button>
-
-        <div className="status">
-          Connection: {conversation.connectionState}
-          {conversation.isProcessing && <span> | Processing...</span>}
+        <div className="aec-status">
+          <p>AEC Enabled: {vocals.isAECEnabled ? "✅" : "❌"}</p>
+          <p>
+            WebRTC Processing:{" "}
+            {vocals.audioConfig.useWebRTCProcessing ? "✅" : "❌"}
+          </p>
+          <p>Sample Rate: {vocals.audioConfig.sampleRate}Hz</p>
+          <p>Channels: {vocals.audioConfig.channelCount}</p>
         </div>
       </div>
+
+      {/* Status Panel */}
+      <div className="status-panel mb-6 p-4 border rounded">
+        <h3 className="text-xl font-semibold mb-4">Status</h3>
+        <div className="flex space-x-4">
+          <span>Connected: {vocals.isConnected ? "✅" : "❌"}</span>
+          <span>Recording: {vocals.isRecording ? "🎤" : "⏹️"}</span>
+          <span>Playing: {vocals.isPlaying ? "🔊" : "🔇"}</span>
+        </div>
+      </div>
+
+      {/* Controls */}
+      <div className="controls mb-6">
+        <button
+          onClick={vocals.startRecording}
+          disabled={vocals.isRecording}
+          className="mr-2 px-4 py-2 bg-blue-500 text-white rounded disabled:opacity-50"
+        >
+          Start Recording
+        </button>
+        <button
+          onClick={vocals.stopRecording}
+          disabled={!vocals.isRecording}
+          className="mr-2 px-4 py-2 bg-red-500 text-white rounded disabled:opacity-50"
+        >
+          Stop Recording
+        </button>
+        <button
+          onClick={vocals.playAudio}
+          className="mr-2 px-4 py-2 bg-green-500 text-white rounded"
+        >
+          Play Audio
+        </button>
+        <button
+          onClick={vocals.pauseAudio}
+          className="mr-2 px-4 py-2 bg-yellow-500 text-white rounded"
+        >
+          Pause Audio
+        </button>
+        <button
+          onClick={vocals.clearQueue}
+          className="px-4 py-2 bg-gray-500 text-white rounded"
+        >
+          Clear Queue
+        </button>
+      </div>
+
+      {/* Audio Queue */}
+      <div className="audio-queue mb-6 p-4 border rounded">
+        <h3 className="text-xl font-semibold mb-4">
+          Audio Queue ({vocals.audioQueue.length})
+        </h3>
+        {vocals.audioQueue.length > 0 ? (
+          <ul className="space-y-2">
+            {vocals.audioQueue.map((segment, index) => (
+              <li key={segment.segment_id} className="p-2 bg-gray-100 rounded">
+                <span className="font-medium">#{index + 1}</span>
+                <span className="ml-2">{segment.text}</span>
+                <span className="ml-2 text-sm text-gray-500">
+                  ({segment.duration_seconds.toFixed(2)}s)
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-gray-500">No audio in queue</p>
+        )}
+      </div>
+
+      {/* Error Display */}
+      {vocals.error && (
+        <div className="error mb-6 p-4 border border-red-500 rounded bg-red-50">
+          <h3 className="text-xl font-semibold mb-2 text-red-700">Error</h3>
+          <p className="text-red-600">{vocals.error.message}</p>
+          <p className="text-sm text-red-500">Code: {vocals.error.code}</p>
+        </div>
+      )}
+
+      {/* AEC Support Information */}
+      {aecSupport && (
+        <div className="aec-support p-4 border rounded">
+          <h3 className="text-xl font-semibold mb-4">
+            AEC Support Information
+          </h3>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <p>Overall Support: {aecSupport.supported ? "✅" : "❌"}</p>
+              <p>
+                Echo Cancellation:{" "}
+                {aecSupport.features.echoCancellation ? "✅" : "❌"}
+              </p>
+            </div>
+            <div>
+              <p>
+                Noise Suppression:{" "}
+                {aecSupport.features.noiseSuppression ? "✅" : "❌"}
+              </p>
+              <p>WebRTC Support: {aecSupport.features.webRTC ? "✅" : "❌"}</p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 ```
 
-## Key Benefits
+This comprehensive example demonstrates how to use all the AEC features in your Next.js application. The SDK now provides:
 
-1. **Simplified Code**: Your complex message handling is now just a few lines
-2. **Type Safety**: All message types are properly typed
-3. **Automatic State Management**: No manual state updates needed
-4. **Built-in Features**: Auto-play, deduplication, history management
-5. **Composable**: Mix and match hooks for your specific needs
-6. **Backward Compatible**: Original `useVocals` hook still works
+1. **Built-in AEC Support**: Automatically enabled WebRTC-based echo cancellation
+2. **Multiple Configuration Presets**: Basic, Enhanced, Low-Latency, and High-Fidelity
+3. **WebRTC Processing**: Advanced audio processing with RTCPeerConnection
+4. **Device Management**: Easy audio device switching and testing
+5. **Utility Functions**: Testing AEC support and creating custom configurations
+6. **Pre-configured Hooks**: Ready-to-use hooks with AEC settings
 
-## Migration Guide
-
-1. Replace `useVocals` with `useVocalsConversation` for full conversation apps
-2. Use `useVocalsTranscription` for transcription-only features
-3. Use `useVocalsVisualization` for audio visualization
-4. Remove manual message parsing and state management code
-5. Update your event handlers to use the new typed handlers
-
-The new hooks handle all the complexity you were managing manually, making your code much cleaner and more maintainable!
+The AEC implementation is fully backward compatible and doesn't break any existing functionality while adding powerful new audio processing capabilities.

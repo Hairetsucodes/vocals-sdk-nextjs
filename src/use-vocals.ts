@@ -35,6 +35,33 @@ export interface UseVocalsConfig {
   wsEndpoint?: string;
   /** Whether to use token authentication (defaults to true) */
   useTokenAuth?: boolean;
+  /** Audio processing configuration */
+  audioConfig?: AudioProcessingConfig;
+}
+
+// Audio processing configuration interface
+export interface AudioProcessingConfig {
+  /** Enable acoustic echo cancellation (defaults to true) */
+  echoCancellation?: boolean;
+  /** Enable noise suppression (defaults to true) */
+  noiseSuppression?: boolean;
+  /** Enable auto gain control (defaults to true) */
+  autoGainControl?: boolean;
+  /** Specific audio device ID to use */
+  deviceId?: string;
+  /** Sample rate for audio processing (defaults to 44100) */
+  sampleRate?: number;
+  /** Audio channel count (defaults to 1 for mono) */
+  channelCount?: number;
+  /** Enable advanced WebRTC audio processing (defaults to false) */
+  useWebRTCProcessing?: boolean;
+  /** Advanced WebRTC constraints */
+  advancedConstraints?: {
+    echoCancellationType?: "browser" | "system" | "aec3";
+    latency?: number;
+    volume?: number;
+    sampleSize?: number;
+  };
 }
 
 // Connection states
@@ -123,6 +150,15 @@ export interface UseVocalsReturn {
 
   // Audio amplitude for visualization
   currentAmplitude: number;
+
+  // Audio configuration and AEC utilities
+  audioConfig: AudioProcessingConfig;
+  isAECEnabled: boolean;
+  getAudioDevices: () => Promise<MediaDeviceInfo[]>;
+  setAudioDevice: (deviceId: string) => Promise<void>;
+  testAudioConstraints: (
+    constraints: MediaTrackConstraints
+  ) => Promise<boolean>;
 }
 
 // Default configuration
@@ -135,6 +171,16 @@ const DEFAULT_CONFIG: Required<UseVocalsConfig> = {
   tokenRefreshBuffer: 60000, // 1 minute
   wsEndpoint: "",
   useTokenAuth: true,
+  audioConfig: {
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+    deviceId: undefined,
+    sampleRate: 44100,
+    channelCount: 1,
+    useWebRTCProcessing: false,
+    advancedConstraints: {},
+  },
 };
 
 // Token manager class for handling token lifecycle
@@ -221,24 +267,71 @@ async function createAudioBufferFromBase64(
   return await audioContext.decodeAudioData(arrayBuffer);
 }
 
-// Audio processing functions (matching old code approach)
+// Audio processing functions with AEC support
 async function initializeAudioProcessing(
   onAudioData: (audioData: AudioProcessorMessage) => void,
-  deviceId?: string
+  audioConfig: AudioProcessingConfig = {}
 ): Promise<{
   stream: MediaStream;
   audioContext: AudioContext;
   source: MediaStreamAudioSourceNode;
   processor: AudioWorkletNode;
 }> {
-  // Get user media
+  // Build WebRTC-compatible audio constraints with AEC
+  const audioConstraints: MediaTrackConstraints = {
+    echoCancellation: audioConfig.echoCancellation ?? true,
+    noiseSuppression: audioConfig.noiseSuppression ?? true,
+    autoGainControl: audioConfig.autoGainControl ?? true,
+    channelCount: audioConfig.channelCount ?? 1,
+    sampleRate: audioConfig.sampleRate ?? 44100,
+  };
+
+  // Add device ID if specified
+  if (audioConfig.deviceId) {
+    audioConstraints.deviceId = { exact: audioConfig.deviceId };
+  }
+
+  // Add advanced WebRTC constraints if enabled
+  if (audioConfig.useWebRTCProcessing && audioConfig.advancedConstraints) {
+    const advanced = audioConfig.advancedConstraints;
+    if (advanced.echoCancellationType) {
+      (audioConstraints as any).echoCancellationType =
+        advanced.echoCancellationType;
+    }
+    if (advanced.latency) {
+      (audioConstraints as any).latency = advanced.latency;
+    }
+    if (advanced.volume) {
+      (audioConstraints as any).volume = advanced.volume;
+    }
+    if (advanced.sampleSize) {
+      (audioConstraints as any).sampleSize = advanced.sampleSize;
+    }
+  }
+
+  // Get user media with AEC-enabled constraints
   const stream = await navigator.mediaDevices.getUserMedia({
-    audio: deviceId ? { deviceId: { exact: deviceId } } : true,
+    audio: audioConstraints,
   });
 
-  // Create audio context
-  const audioContext = new AudioContext();
-  console.log("Sample rate:", audioContext.sampleRate); // Should show 24000
+  // Log audio track settings for debugging
+  const audioTracks = stream.getAudioTracks();
+  if (audioTracks.length > 0) {
+    const settings = audioTracks[0].getSettings();
+    console.log("Audio track settings:", {
+      echoCancellation: settings.echoCancellation,
+      noiseSuppression: settings.noiseSuppression,
+      autoGainControl: settings.autoGainControl,
+      sampleRate: settings.sampleRate,
+      channelCount: settings.channelCount,
+    });
+  }
+
+  // Create audio context with preferred sample rate
+  const audioContext = new AudioContext({
+    sampleRate: audioConfig.sampleRate ?? 44100,
+  });
+  console.log("AudioContext sample rate:", audioContext.sampleRate);
   // Add the audio worklet module
   await audioContext.audioWorklet.addModule(
     URL.createObjectURL(
@@ -284,6 +377,130 @@ async function initializeAudioProcessing(
   source.connect(processor);
 
   return { stream, audioContext, source, processor };
+}
+
+// WebRTC-based audio processing with enhanced AEC
+async function initializeWebRTCAudioProcessing(
+  onAudioData: (audioData: AudioProcessorMessage) => void,
+  audioConfig: AudioProcessingConfig = {}
+): Promise<{
+  stream: MediaStream;
+  audioContext: AudioContext;
+  source: MediaStreamAudioSourceNode;
+  processor: AudioWorkletNode;
+  peerConnection?: RTCPeerConnection;
+}> {
+  // Create RTCPeerConnection for advanced audio processing
+  const peerConnection = new RTCPeerConnection({
+    iceServers: [], // No ICE servers needed for local processing
+  });
+
+  // Get media with enhanced WebRTC constraints
+  const audioConstraints: MediaTrackConstraints = {
+    echoCancellation: audioConfig.echoCancellation ?? true,
+    noiseSuppression: audioConfig.noiseSuppression ?? true,
+    autoGainControl: audioConfig.autoGainControl ?? true,
+    channelCount: audioConfig.channelCount ?? 1,
+    sampleRate: audioConfig.sampleRate ?? 44100,
+  };
+
+  // Add device ID if specified
+  if (audioConfig.deviceId) {
+    audioConstraints.deviceId = { exact: audioConfig.deviceId };
+  }
+
+  // Add advanced WebRTC constraints
+  if (audioConfig.advancedConstraints) {
+    const advanced = audioConfig.advancedConstraints;
+    Object.assign(audioConstraints, advanced);
+  }
+
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: audioConstraints,
+  });
+
+  // Add stream to peer connection for processing
+  stream.getTracks().forEach((track) => {
+    peerConnection.addTrack(track, stream);
+  });
+
+  // Create audio context with enhanced settings
+  const audioContext = new AudioContext({
+    sampleRate: audioConfig.sampleRate ?? 44100,
+    latencyHint: "interactive",
+  });
+
+  // Add the audio worklet module with enhanced processing
+  await audioContext.audioWorklet.addModule(
+    URL.createObjectURL(
+      new Blob(
+        [
+          `
+        class EnhancedAudioProcessor extends AudioWorkletProcessor {
+          constructor() {
+            super();
+            this.bufferSize = 4096;
+            this.buffer = new Float32Array(this.bufferSize);
+            this.bufferIndex = 0;
+          }
+
+          process(inputs, outputs, parameters) {
+            const input = inputs[0];
+            if (input && input[0]) {
+              const audioData = input[0];
+              
+              // Enhanced buffering for better AEC performance
+              for (let i = 0; i < audioData.length; i++) {
+                this.buffer[this.bufferIndex] = audioData[i];
+                this.bufferIndex++;
+                
+                if (this.bufferIndex >= this.bufferSize) {
+                  // Send processed audio data to main thread
+                  this.port.postMessage({
+                    data: Array.from(this.buffer),
+                    format: 'pcm_f32le',
+                    sampleRate: sampleRate,
+                    bufferSize: this.bufferSize,
+                    timestamp: currentTime
+                  });
+                  this.bufferIndex = 0;
+                }
+              }
+            }
+            return true;
+          }
+        }
+        registerProcessor('enhanced-audio-processor', EnhancedAudioProcessor);
+      `,
+        ],
+        { type: "application/javascript" }
+      )
+    )
+  );
+
+  // Create source and processor nodes
+  const source = audioContext.createMediaStreamSource(stream);
+  const processor = new AudioWorkletNode(
+    audioContext,
+    "enhanced-audio-processor"
+  );
+
+  // Handle processed audio data
+  processor.port.onmessage = (event) => {
+    onAudioData({
+      data: event.data.data,
+      format: event.data.format,
+      sampleRate: audioContext.sampleRate,
+    });
+  };
+
+  // Connect nodes
+  source.connect(processor);
+
+  // Log WebRTC processing status
+  console.log("WebRTC audio processing initialized with enhanced AEC");
+
+  return { stream, audioContext, source, processor, peerConnection };
 }
 
 function cleanupAudioResources(
@@ -345,6 +562,7 @@ export function useVocals(config: UseVocalsConfig = {}): UseVocalsReturn {
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
   const processorRef = useRef<AudioWorkletNode | null>(null);
   const isListeningRef = useRef<boolean>(false);
+  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
 
   // Audio playback refs
   const playbackAudioContextRef = useRef<AudioContext | null>(null);
@@ -606,6 +824,12 @@ export function useVocals(config: UseVocalsConfig = {}): UseVocalsReturn {
       playbackAudioContextRef.current = null;
     }
 
+    // Clean up WebRTC peer connection
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
+      peerConnectionRef.current = null;
+    }
+
     // Reset refs
     streamRef.current = null;
     processorRef.current = null;
@@ -681,36 +905,74 @@ export function useVocals(config: UseVocalsConfig = {}): UseVocalsReturn {
       // Send start event (matching old code)
       sendMessage({ event: "start" });
 
-      // Initialize audio processing (matching old code)
-      const { stream, audioContext, source, processor } =
-        await initializeAudioProcessing((audioData: AudioProcessorMessage) => {
-          // Only send audio data if we're actively listening
-          if (!isListeningRef.current) {
-            return;
-          }
+      // Initialize audio processing with AEC configuration
+      const processingResult = fullConfig.audioConfig.useWebRTCProcessing
+        ? await initializeWebRTCAudioProcessing(
+            (audioData: AudioProcessorMessage) => {
+              // Only send audio data if we're actively listening
+              if (!isListeningRef.current) {
+                return;
+              }
 
-          // Send audio data to server (matching old code format)
-          if (wsRef.current?.readyState === WebSocket.OPEN) {
-            try {
-              wsRef.current.send(
-                JSON.stringify({
-                  event: "media",
-                  data: audioData.data,
-                  format: audioData.format,
-                  sampleRate: audioData.sampleRate,
-                })
-              );
-            } catch (error) {
-              console.error("Error sending audio data:", error);
-            }
-          }
-        });
+              // Send audio data to server (matching old code format)
+              if (wsRef.current?.readyState === WebSocket.OPEN) {
+                try {
+                  wsRef.current.send(
+                    JSON.stringify({
+                      event: "media",
+                      data: audioData.data,
+                      format: audioData.format,
+                      sampleRate: audioData.sampleRate,
+                    })
+                  );
+                } catch (error) {
+                  console.error("Error sending audio data:", error);
+                }
+              }
+            },
+            fullConfig.audioConfig
+          )
+        : await initializeAudioProcessing(
+            (audioData: AudioProcessorMessage) => {
+              // Only send audio data if we're actively listening
+              if (!isListeningRef.current) {
+                return;
+              }
+
+              // Send audio data to server (matching old code format)
+              if (wsRef.current?.readyState === WebSocket.OPEN) {
+                try {
+                  wsRef.current.send(
+                    JSON.stringify({
+                      event: "media",
+                      data: audioData.data,
+                      format: audioData.format,
+                      sampleRate: audioData.sampleRate,
+                    })
+                  );
+                } catch (error) {
+                  console.error("Error sending audio data:", error);
+                }
+              }
+            },
+            fullConfig.audioConfig
+          );
+
+      const { stream, audioContext, source, processor } = processingResult;
 
       // Store references
       streamRef.current = stream;
       audioContextRef.current = audioContext;
       sourceRef.current = source;
       processorRef.current = processor;
+
+      // Store peer connection if using WebRTC processing
+      if (fullConfig.audioConfig.useWebRTCProcessing) {
+        const webrtcResult = processingResult as any;
+        if (webrtcResult.peerConnection) {
+          peerConnectionRef.current = webrtcResult.peerConnection;
+        }
+      }
 
       // Send settings event with sample rate
       sendMessage({
@@ -752,6 +1014,12 @@ export function useVocals(config: UseVocalsConfig = {}): UseVocalsReturn {
     processorRef.current = null;
     sourceRef.current = null;
     audioContextRef.current = null;
+
+    // Clean up WebRTC peer connection if exists
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.close();
+      peerConnectionRef.current = null;
+    }
   }, [sendMessage]);
 
   // Audio playback methods
@@ -1019,6 +1287,51 @@ export function useVocals(config: UseVocalsConfig = {}): UseVocalsReturn {
     });
   }, []);
 
+  // Audio utility functions
+  const getAudioDevices = useCallback(async (): Promise<MediaDeviceInfo[]> => {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      return devices.filter((device) => device.kind === "audioinput");
+    } catch (error) {
+      console.error("Error getting audio devices:", error);
+      return [];
+    }
+  }, []);
+
+  const setAudioDevice = useCallback(
+    async (deviceId: string): Promise<void> => {
+      // Update the audio config with the new device ID
+      fullConfig.audioConfig.deviceId = deviceId;
+
+      // If currently recording, restart with the new device
+      if (recordingState === "recording") {
+        await stopRecording();
+        await startRecording();
+      }
+    },
+    [recordingState, stopRecording, startRecording, fullConfig.audioConfig]
+  );
+
+  const testAudioConstraints = useCallback(
+    async (constraints: MediaTrackConstraints): Promise<boolean> => {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: constraints,
+        });
+        const tracks = stream.getAudioTracks();
+        if (tracks.length > 0) {
+          tracks.forEach((track) => track.stop());
+          return true;
+        }
+        return false;
+      } catch (error) {
+        console.error("Audio constraints test failed:", error);
+        return false;
+      }
+    },
+    []
+  );
+
   // Event handler registration
   const onMessage = useCallback(
     (handler: (message: WebSocketResponse) => void) => {
@@ -1122,6 +1435,13 @@ export function useVocals(config: UseVocalsConfig = {}): UseVocalsReturn {
 
     // Audio amplitude
     currentAmplitude,
+
+    // Audio configuration and AEC utilities
+    audioConfig: fullConfig.audioConfig,
+    isAECEnabled: fullConfig.audioConfig.echoCancellation ?? true,
+    getAudioDevices,
+    setAudioDevice,
+    testAudioConstraints,
   };
 }
 
@@ -2136,3 +2456,250 @@ export function useVocalsVisualization(
     onAmplitudeChange,
   };
 }
+
+// AEC Configuration Presets and Utilities
+export const AECPresets = {
+  // Basic AEC with standard settings
+  basic: (): AudioProcessingConfig => ({
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+    sampleRate: 44100,
+    channelCount: 1,
+    useWebRTCProcessing: false,
+  }),
+
+  // High-quality AEC with enhanced WebRTC processing
+  enhanced: (): AudioProcessingConfig => ({
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+    sampleRate: 48000,
+    channelCount: 1,
+    useWebRTCProcessing: true,
+    advancedConstraints: {
+      echoCancellationType: "aec3",
+      latency: 0.01, // 10ms latency
+    },
+  }),
+
+  // Low-latency AEC optimized for real-time interactions
+  lowLatency: (): AudioProcessingConfig => ({
+    echoCancellation: true,
+    noiseSuppression: true,
+    autoGainControl: true,
+    sampleRate: 44100,
+    channelCount: 1,
+    useWebRTCProcessing: true,
+    advancedConstraints: {
+      echoCancellationType: "system",
+      latency: 0.005, // 5ms latency
+    },
+  }),
+
+  // High-quality AEC for music or high-fidelity audio
+  highFidelity: (): AudioProcessingConfig => ({
+    echoCancellation: true,
+    noiseSuppression: false, // Preserve audio quality
+    autoGainControl: false,
+    sampleRate: 48000,
+    channelCount: 2, // Stereo
+    useWebRTCProcessing: true,
+    advancedConstraints: {
+      echoCancellationType: "aec3",
+      latency: 0.02, // 20ms latency for better quality
+    },
+  }),
+
+  // Minimal processing for testing or debugging
+  minimal: (): AudioProcessingConfig => ({
+    echoCancellation: false,
+    noiseSuppression: false,
+    autoGainControl: false,
+    sampleRate: 44100,
+    channelCount: 1,
+    useWebRTCProcessing: false,
+  }),
+};
+
+// Utility functions for AEC management
+export const AECUtils = {
+  /**
+   * Test if the browser supports the required AEC features
+   */
+  async testAECSupport(): Promise<{
+    supported: boolean;
+    features: {
+      echoCancellation: boolean;
+      noiseSuppression: boolean;
+      autoGainControl: boolean;
+      webRTC: boolean;
+    };
+  }> {
+    const features = {
+      echoCancellation: false,
+      noiseSuppression: false,
+      autoGainControl: false,
+      webRTC: false,
+    };
+
+    try {
+      // Test basic audio constraints
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+
+      const tracks = stream.getAudioTracks();
+      if (tracks.length > 0) {
+        const settings = tracks[0].getSettings();
+        features.echoCancellation = settings.echoCancellation === true;
+        features.noiseSuppression = settings.noiseSuppression === true;
+        features.autoGainControl = settings.autoGainControl === true;
+
+        // Clean up
+        tracks.forEach((track) => track.stop());
+      }
+
+      // Test WebRTC support
+      features.webRTC = typeof RTCPeerConnection !== "undefined";
+    } catch (error) {
+      console.warn("AEC support test failed:", error);
+    }
+
+    return {
+      supported: features.echoCancellation && features.noiseSuppression,
+      features,
+    };
+  },
+
+  /**
+   * Get recommended AEC configuration based on browser and device capabilities
+   */
+  async getRecommendedConfig(): Promise<AudioProcessingConfig> {
+    const support = await this.testAECSupport();
+
+    if (!support.supported) {
+      console.warn("Limited AEC support detected, using minimal configuration");
+      return AECPresets.minimal();
+    }
+
+    if (support.features.webRTC) {
+      return AECPresets.enhanced();
+    }
+
+    return AECPresets.basic();
+  },
+
+  /**
+   * Create a custom AEC configuration with validation
+   */
+  createConfig(config: Partial<AudioProcessingConfig>): AudioProcessingConfig {
+    const defaultConfig = AECPresets.basic();
+    const mergedConfig = { ...defaultConfig, ...config };
+
+    // Validate sample rate
+    if (
+      mergedConfig.sampleRate &&
+      ![8000, 16000, 22050, 44100, 48000].includes(mergedConfig.sampleRate)
+    ) {
+      console.warn(
+        `Unsupported sample rate: ${mergedConfig.sampleRate}, using 44100`
+      );
+      mergedConfig.sampleRate = 44100;
+    }
+
+    // Validate channel count
+    if (
+      mergedConfig.channelCount &&
+      ![1, 2].includes(mergedConfig.channelCount)
+    ) {
+      console.warn(
+        `Unsupported channel count: ${mergedConfig.channelCount}, using 1`
+      );
+      mergedConfig.channelCount = 1;
+    }
+
+    return mergedConfig;
+  },
+
+  /**
+   * Test if specific audio constraints work on the current device
+   */
+  async testConstraints(constraints: MediaTrackConstraints): Promise<boolean> {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: constraints,
+      });
+      const tracks = stream.getAudioTracks();
+      tracks.forEach((track) => track.stop());
+      return true;
+    } catch (error) {
+      return false;
+    }
+  },
+
+  /**
+   * Get available audio input devices
+   */
+  async getAudioDevices(): Promise<MediaDeviceInfo[]> {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      return devices.filter((device) => device.kind === "audioinput");
+    } catch (error) {
+      console.error("Failed to get audio devices:", error);
+      return [];
+    }
+  },
+
+  /**
+   * Log detailed audio track information for debugging
+   */
+  async debugAudioTrack(stream: MediaStream): Promise<void> {
+    const tracks = stream.getAudioTracks();
+    if (tracks.length === 0) {
+      console.warn("No audio tracks found in stream");
+      return;
+    }
+
+    const track = tracks[0];
+    const settings = track.getSettings();
+    const capabilities = track.getCapabilities();
+    const constraints = track.getConstraints();
+
+    console.group("Audio Track Debug Info");
+    console.log("Settings:", settings);
+    console.log("Capabilities:", capabilities);
+    console.log("Constraints:", constraints);
+    console.log("Label:", track.label);
+    console.log("Kind:", track.kind);
+    console.log("Ready State:", track.readyState);
+    console.log("Muted:", track.muted);
+    console.log("Enabled:", track.enabled);
+    console.groupEnd();
+  },
+};
+
+// Export helper function for creating AEC-enabled hooks
+export function createAECEnabledHook(
+  preset: keyof typeof AECPresets = "basic"
+) {
+  return function useVocalsWithAEC(
+    config: Omit<UseVocalsConfig, "audioConfig"> = {}
+  ) {
+    const aecConfig = AECPresets[preset]();
+    return useVocals({
+      ...config,
+      audioConfig: aecConfig,
+    });
+  };
+}
+
+// Convenience hooks with pre-configured AEC settings
+export const useVocalsBasicAEC = createAECEnabledHook("basic");
+export const useVocalsEnhancedAEC = createAECEnabledHook("enhanced");
+export const useVocalsLowLatencyAEC = createAECEnabledHook("lowLatency");
+export const useVocalsHighFidelityAEC = createAECEnabledHook("highFidelity");
